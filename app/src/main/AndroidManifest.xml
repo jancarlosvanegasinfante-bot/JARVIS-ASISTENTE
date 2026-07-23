@@ -6,6 +6,9 @@
     <!-- Micrófono para escucha continua -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!-- Para que "make_call" pueda llamar directo, sin pasar por el marcador -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+
     <!-- Servicio en primer plano tipo "microphone" (obligatorio Android 14+) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
