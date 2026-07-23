@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">Jarvis</string>
+    <string name="accessibility_service_description">
+        Permite a Jarvis leer y controlar la pantalla para ejecutar tus
+        comandos de voz (abrir apps, enviar mensajes de WhatsApp, tocar
+        botones, escribir texto). Solo se activa cuando tú das la orden.
+    </string>
+</resources>
