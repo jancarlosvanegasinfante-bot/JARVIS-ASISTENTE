@@ -45,6 +45,7 @@ class MainActivity : ComponentActivity() {
     companion object {
         private const val TAG = "MainActivity"
         private const val PERMISSION_REQ_CODE = 2001
+        var instance: MainActivity? = null
     }
 
     private lateinit var webView: WebView
@@ -53,6 +54,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        instance = this
         configureScreenWakeup()
 
         webView = WebView(this)
@@ -75,14 +77,14 @@ class MainActivity : ComponentActivity() {
         startWakeWordServiceIfReady()
         initTextToSpeech()
 
-        handleIntentTrigger(intent)
+        intent?.let { handleIntentTrigger(it) }
     }
 
-    override fun onNewIntent(intent: Intent?) {
+    override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         configureScreenWakeup()
-        intent?.let { handleIntentTrigger(it) }
+        handleIntentTrigger(intent)
     }
 
     private fun configureScreenWakeup() {
@@ -364,6 +366,7 @@ class MainActivity : ComponentActivity() {
         tts?.stop()
         tts?.shutdown()
         speechRecognizer?.destroy()
+        instance = null
         super.onDestroy()
     }
 }
