@@ -9,6 +9,13 @@
     <!-- Para que "make_call" pueda llamar directo, sin pasar por el marcador -->
     <uses-permission android:name="android.permission.CALL_PHONE" />
 
+    <!-- Reconocimiento de voz nativo -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
+
     <!-- Servicio en primer plano tipo "microphone" (obligatorio Android 14+) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
