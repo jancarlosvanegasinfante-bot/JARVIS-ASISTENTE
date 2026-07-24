@@ -4,6 +4,11 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.Intent
 import android.graphics.Path
+import android.net.Uri
+import android.os.Build
+import android.provider.AlarmClock
+import android.provider.MediaStore
+import android.telephony.SmsManager
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -12,40 +17,30 @@ import org.json.JSONObject
 /**
  * JarvisAccessibilityService
  *
- * Este es el "brazo" de Jarvis. Una vez el usuario lo activa manualmente en
- * Ajustes > Accesibilidad > Servicios instalados > Jarvis, este servicio puede:
- *  - Leer el árbol de accesibilidad de CUALQUIER app en pantalla
- *  - Abrir apps por nombre de paquete
- *  - Buscar texto/botones en pantalla y tocarlos
- *  - Escribir texto en campos de entrada
- *  - Hacer scroll, volver atrás, ir a inicio
- *
- * Recibe comandos desde MainActivity (que a su vez los recibe del backend Gemini)
- * en forma de JSON estructurado, ej:
- *   { "action": "open_app", "package": "com.whatsapp" }
- *   { "action": "tap_text", "text": "Enviar" }
- *   { "action": "type_text", "text": "Ya voy en camino" }
- *   { "action": "go_back" }
+ * El "brazo robótico" de Jarvis en Android.
+ * Ejecuta acciones reales en el sistema:
+ *  - Enviar mensajes por WhatsApp y SMS
+ *  - Realizar y contestar llamadas telefónicas (Modo Moto)
+ *  - Configurar alarmas nativas sin tocar el celular
+ *  - Buscar y reproducir canciones en YouTube y Spotify
+ *  - Abrir, navegar y cerrar aplicaciones ("Cierra la app", "Ir a inicio")
  */
 class JarvisAccessibilityService : AccessibilityService() {
 
     companion object {
         private const val TAG = "JarvisAccessibility"
-        // Referencia estática simple para que MainActivity pueda invocar acciones.
-        // Para producción real, esto se reemplaza por un bus de eventos (LocalBroadcastManager).
         var instance: JarvisAccessibilityService? = null
     }
+
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
-        Log.d(TAG, "Jarvis Accessibility Service conectado")
+        Log.d(TAG, "Jarvis Accessibility Service activo y conectado")
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // Aquí se puede loguear qué app está en primer plano, útil para
-        // que Jarvis sepa "dónde está parado" antes de ejecutar una acción.
-    }
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
 
     override fun onInterrupt() {
         Log.d(TAG, "Servicio interrumpido")
@@ -56,95 +51,238 @@ class JarvisAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
-
-    /**
-     * Punto de entrada: recibe el IntentResult completo que ya arma tu
-     * backend Gemini (mismo JSON que ves en la tarjeta "Intención Parseada"
-     * dentro del VoiceModal) y lo ejecuta de verdad en el teléfono.
-     */
+    /** Punto de entrada principal ejecutado desde JS / MainActivity */
     fun executeAction(actionJson: String) {
         try {
+            Log.d(TAG, "Ejecutando acción nativa recibida: $actionJson")
             val json = JSONObject(actionJson)
             val params = json.optJSONObject("params") ?: JSONObject()
+            val action = json.optString("action", "")
 
-            when (json.getString("action")) {
-                // --- Acciones de negocio (las que ya manda tu App.tsx) ---
+            when (action) {
                 "send_whatsapp" -> sendWhatsApp(
                     contact = params.optString("contact"),
                     phone = params.optString("phoneNumber"),
                     message = params.optString("message")
                 )
-                "make_call" -> makeCall(params.optString("phoneNumber"))
-                "open_app" -> {
-                    // Puede venir como nombre visible ("Spotify") o paquete directo
-                    val pkg = params.optString("appName", "")
-                    openApp(resolvePackageName(pkg))
-                }
+
+                "make_call" -> makeCall(params.optString("phoneNumber"), params.optString("contact"))
+
+                "answer_call" -> answerCall()
+
+                "who_is_calling", "who_messaged" -> readLatestNotification()
+
+                "reply_message" -> replyLatestMessage(params.optString("message"))
+
+                "set_reminder", "set_alarm" -> setAlarm(
+                    time = params.optString("time"),
+                    title = params.optString("title", "Alarma de Jarvis")
+                )
+
+                "send_sms" -> sendSms(
+                    contact = params.optString("contact"),
+                    phone = params.optString("phoneNumber"),
+                    message = params.optString("message")
+                )
+
+                "play_youtube" -> playYouTube(params.optString("query"))
+
+                "play_spotify" -> playSpotify(params.optString("track"))
+
+                "open_app" -> openApp(resolvePackageName(params.optString("appName")))
+
+                "close_app" -> closeApp()
+
+                "go_home" -> performGlobalAction(GLOBAL_ACTION_HOME)
+
+                "go_back" -> performGlobalAction(GLOBAL_ACTION_BACK)
+
                 "search_web" -> searchWeb(params.optString("query"))
-                "control_music" -> controlMusic(params.optString("command"))
+
+                "control_music" -> controlMusic(
+                    command = params.optString("command"),
+                    track = params.optString("track")
+                )
+
                 "read_notifications" -> performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
 
-                // --- Acciones genéricas de bajo nivel (por si las necesitas directo) ---
                 "tap_text" -> tapNodeByText(json.optString("text"))
-                "type_text" -> typeText(json.optString("text"))
-                "go_back" -> performGlobalAction(GLOBAL_ACTION_BACK)
-                "go_home" -> performGlobalAction(GLOBAL_ACTION_HOME)
-                "scroll_down" -> scrollForward()
 
-                else -> Log.w(TAG, "Acción todavía no soportada: ${json.getString("action")}")
+                "type_text" -> typeText(json.optString("text"))
+
+                else -> Log.w(TAG, "Acción no reconocida: $action")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error ejecutando acción: $actionJson", e)
+            Log.e(TAG, "Error ejecutando acción nativa: $actionJson", e)
         }
     }
 
-    /**
-     * Flujo real de WhatsApp: abre la app, espera a que cargue, busca el
-     * contacto por nombre/teléfono, escribe el mensaje y lo envía.
-     * Los delays son necesarios porque cada pantalla tarda en renderizar.
-     */
+    /** Envío de WhatsApp con fallback inteligente a Deep Link / Accesibilidad */
     private fun sendWhatsApp(contact: String, phone: String, message: String) {
+        val cleanPhone = phone.replace(Regex("[^0-9]"), "")
+        if (cleanPhone.length >= 7) {
+            // Intent directo por API de WhatsApp
+            val uri = Uri.parse("https://api.whatsapp.com/send?phone=$cleanPhone&text=${Uri.encode(message)}")
+            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            try {
+                startActivity(intent)
+                handler.postDelayed({
+                    // Tocar automáticamente el botón de enviar en WhatsApp si aparece
+                    tapNodeByText("Enviar") || tapNodeByText("Send")
+                }, 2000)
+                return
+            } catch (e: Exception) {
+                Log.w(TAG, "Fallo al abrir Deep Link de WhatsApp, intentando por interfaz visual...", e)
+            }
+        }
+
+        // Fallback por Accesibilidad visual
         openApp("com.whatsapp")
         handler.postDelayed({
-            // Intenta tocar el contacto por nombre en la lista de chats
             val target = if (contact.isNotBlank()) contact else phone
-            tapNodeByText(target)
-            handler.postDelayed({
-                typeText(message)
+            if (tapNodeByText(target)) {
                 handler.postDelayed({
-                    // El botón de enviar en WhatsApp no siempre tiene texto
-                    // visible ("Enviar" en algunas versiones, ícono en otras)
-                    if (!tapNodeByText("Enviar")) {
-                        Log.w(TAG, "No se encontró botón Enviar por texto; revisar selector")
-                    }
-                }, 500)
-            }, 1200)
+                    typeText(message)
+                    handler.postDelayed({
+                        tapNodeByText("Enviar") || tapNodeByText("Send")
+                    }, 600)
+                }, 1200)
+            }
         }, 1800)
     }
 
-    private fun makeCall(phone: String) {
-        if (phone.isBlank()) return
+    /** Realizar llamada telefónica */
+    private fun makeCall(phone: String, contact: String) {
+        val targetNum = phone.ifBlank { contact }
+        if (targetNum.isBlank()) return
         val callIntent = Intent(Intent.ACTION_CALL).apply {
-            data = android.net.Uri.parse("tel:$phone")
+            data = Uri.parse("tel:${Uri.encode(targetNum)}")
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         try {
             startActivity(callIntent)
-        } catch (e: SecurityException) {
-            Log.e(TAG, "Falta permiso CALL_PHONE en el Manifest", e)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al realizar llamada", e)
         }
     }
 
-    private fun searchWeb(query: String) {
-        val searchIntent = Intent(Intent.ACTION_WEB_SEARCH).apply {
-            putExtra("query", query)
+    /** Contestar llamada entrante por voz (Modo Moto) */
+    private fun answerCall() {
+        val answered = MainActivity.AndroidBridge(MainActivity()).answerPhoneCall()
+        if (!answered) {
+            // Fallback por botón visual de contestar
+            tapNodeByText("Contestar") || tapNodeByText("Responder") || tapNodeByText("Answer")
+        }
+    }
+
+    /** Narrar por voz la notificación más reciente */
+    private fun readLatestNotification() {
+        val text = JarvisNotificationListener.getLatestNotificationSummary()
+        speak(text)
+    }
+
+    /** Responder al último mensaje recibido por voz */
+    private fun replyLatestMessage(message: String) {
+        val senderPkg = JarvisNotificationListener.latestMessagePackage
+        val senderName = JarvisNotificationListener.latestSenderName
+
+        if (senderPkg == "com.whatsapp") {
+            sendWhatsApp(contact = senderName, phone = "", message = message)
+        } else {
+            sendSms(contact = senderName, phone = "", message = message)
+        }
+    }
+
+    /** Configurar alarma nativa de Android sin interacción táctil */
+    private fun setAlarm(time: String, title: String) {
+        var hour = 7
+        var minute = 0
+        val parts = time.split(":")
+        if (parts.size >= 2) {
+            hour = parts[0].toIntOrNull() ?: 7
+            minute = parts[1].toIntOrNull() ?: 0
+        }
+
+        val intent = Intent(AlarmClock.ACTION_SET_ALARM).apply {
+            putExtra(AlarmClock.EXTRA_HOUR, hour)
+            putExtra(AlarmClock.EXTRA_MINUTES, minute)
+            putExtra(AlarmClock.EXTRA_MESSAGE, title)
+            putExtra(AlarmClock.EXTRA_SKIP_UI, true)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        startActivity(searchIntent)
+        try {
+            startActivity(intent)
+            speak("Alarma configurada correctamente a las $hour:${minute.toString().padStart(2, '0')}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error configurando alarma", e)
+        }
     }
 
-    private fun controlMusic(command: String) {
+    /** Enviar SMS nativo */
+    private fun sendSms(contact: String, phone: String, message: String) {
+        val cleanPhone = phone.replace(Regex("[^0-9+]"), "")
+        if (cleanPhone.isNotBlank()) {
+            try {
+                val smsManager = SmsManager.getDefault()
+                smsManager.sendTextMessage(cleanPhone, null, message, null, null)
+                speak("Mensaje SMS enviado a $contact")
+                return
+            } catch (e: Exception) {
+                Log.w(TAG, "Error usando SmsManager directo, intentando por Intent...", e)
+            }
+        }
+
+        val smsIntent = Intent(Intent.ACTION_SENDTO).apply {
+            data = Uri.parse("smsto:${Uri.encode(cleanPhone)}")
+            putExtra("sms_body", message)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            startActivity(smsIntent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error abriendo app de SMS", e)
+        }
+    }
+
+    /** Reproducir canción o video en YouTube */
+    private fun playYouTube(query: String) {
+        val searchUrl = "https://www.youtube.com/results?search_query=${Uri.encode(query)}"
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(searchUrl)).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            startActivity(intent)
+            speak("Reproduciendo $query en YouTube")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error abriendo YouTube", e)
+        }
+    }
+
+    /** Reproducir música en Spotify */
+    private fun playSpotify(track: String) {
+        val intent = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH).apply {
+            putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
+            putExtra(SearchManager_QUERY, track)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            startActivity(intent)
+            speak("Buscando $track en Spotify")
+        } catch (e: Exception) {
+            // Fallback a abrir Spotify directo
+            openApp("com.spotify.music")
+        }
+    }
+
+    private const val SearchManager_QUERY = "query"
+
+    private fun controlMusic(command: String, track: String) {
+        if (track.isNotBlank()) {
+            playSpotify(track)
+            return
+        }
         val keyCode = when (command) {
             "play", "pause" -> android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
             "next" -> android.view.KeyEvent.KEYCODE_MEDIA_NEXT
@@ -155,24 +293,25 @@ class JarvisAccessibilityService : AccessibilityService() {
         }
         val audioManager = getSystemService(AUDIO_SERVICE) as android.media.AudioManager
         when (keyCode) {
-            android.view.KeyEvent.KEYCODE_VOLUME_UP ->
-                audioManager.adjustVolume(android.media.AudioManager.ADJUST_RAISE, 0)
-            android.view.KeyEvent.KEYCODE_VOLUME_DOWN ->
-                audioManager.adjustVolume(android.media.AudioManager.ADJUST_LOWER, 0)
-            else -> Log.d(TAG, "Comando de música: $command (requiere sesión multimedia activa)")
+            android.view.KeyEvent.KEYCODE_VOLUME_UP -> audioManager.adjustVolume(android.media.AudioManager.ADJUST_RAISE, 0)
+            android.view.KeyEvent.KEYCODE_VOLUME_DOWN -> audioManager.adjustVolume(android.media.AudioManager.ADJUST_LOWER, 0)
+            else -> Log.d(TAG, "Comando multimedia enviado: $command")
         }
     }
 
-    /** Nombres visibles comunes -> paquete real de Android */
     private fun resolvePackageName(appName: String): String {
-        return when (appName.trim().lowercase()) {
-            "whatsapp" -> "com.whatsapp"
-            "spotify" -> "com.spotify.music"
-            "teléfono", "telefono" -> "com.android.dialer"
-            "sms", "mensajes" -> "com.android.mms"
-            "notas" -> "com.google.android.keep"
-            "browser", "navegador", "chrome" -> "com.android.chrome"
-            else -> appName // asume que ya es un nombre de paquete válido
+        val clean = appName.trim().lowercase()
+        return when {
+            clean.contains("whatsapp") -> "com.whatsapp"
+            clean.contains("spotify") -> "com.spotify.music"
+            clean.contains("youtube") -> "com.google.android.youtube"
+            clean.contains("waze") -> "com.waze"
+            clean.contains("maps") || clean.contains("mapas") -> "com.google.android.apps.maps"
+            clean.contains("teléfono") || clean.contains("telefono") -> "com.android.dialer"
+            clean.contains("sms") || clean.contains("mensajes") -> "com.android.mms"
+            clean.contains("reloj") || clean.contains("alarma") -> "com.android.deskclock"
+            clean.contains("chrome") || clean.contains("navegador") -> "com.android.chrome"
+            else -> appName
         }
     }
 
@@ -182,11 +321,26 @@ class JarvisAccessibilityService : AccessibilityService() {
             launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             startActivity(launchIntent)
         } else {
-            Log.w(TAG, "No se encontró la app: $packageName")
+            Log.w(TAG, "Aplicación no encontrada: $packageName")
         }
     }
 
-    /** Busca un nodo (botón, texto, campo) por su texto visible y lo toca */
+    private fun closeApp() {
+        performGlobalAction(GLOBAL_ACTION_HOME)
+    }
+
+    private fun searchWeb(query: String) {
+        val searchIntent = Intent(Intent.ACTION_WEB_SEARCH).apply {
+            putExtra("query", query)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        startActivity(searchIntent)
+    }
+
+    private fun speak(text: String) {
+        MainActivity.instance?.speakNative(text)
+    }
+
     private fun tapNodeByText(text: String): Boolean {
         val root = rootInActiveWindow ?: return false
         val nodes = root.findAccessibilityNodeInfosByText(text)
@@ -209,7 +363,6 @@ class JarvisAccessibilityService : AccessibilityService() {
         return null
     }
 
-    /** Escribe texto en el campo actualmente enfocado */
     private fun typeText(text: String) {
         val root = rootInActiveWindow ?: return
         val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return
@@ -218,20 +371,5 @@ class JarvisAccessibilityService : AccessibilityService() {
             AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text
         )
         focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
-    }
-
-    private fun scrollForward() {
-        val root = rootInActiveWindow ?: return
-        root.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
-    }
-
-    /** Gesto de tap en coordenadas x,y (para casos donde no hay texto que buscar) */
-    fun tapAt(x: Float, y: Float) {
-        val path = Path()
-        path.moveTo(x, y)
-        val gesture = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(path, 0, 100))
-            .build()
-        dispatchGesture(gesture, null, null)
     }
 }
