@@ -121,7 +121,6 @@ class JarvisAccessibilityService : AccessibilityService() {
     private fun sendWhatsApp(contact: String, phone: String, message: String) {
         val cleanPhone = phone.replace(Regex("[^0-9]"), "")
         if (cleanPhone.length >= 7) {
-            // Intent directo por API de WhatsApp
             val uri = Uri.parse("https://api.whatsapp.com/send?phone=$cleanPhone&text=${Uri.encode(message)}")
             val intent = Intent(Intent.ACTION_VIEW, uri).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -129,7 +128,6 @@ class JarvisAccessibilityService : AccessibilityService() {
             try {
                 startActivity(intent)
                 handler.postDelayed({
-                    // Tocar automáticamente el botón de enviar en WhatsApp si aparece
                     tapNodeByText("Enviar") || tapNodeByText("Send")
                 }, 2000)
                 return
@@ -138,7 +136,6 @@ class JarvisAccessibilityService : AccessibilityService() {
             }
         }
 
-        // Fallback por Accesibilidad visual
         openApp("com.whatsapp")
         handler.postDelayed({
             val target = if (contact.isNotBlank()) contact else phone
@@ -172,7 +169,6 @@ class JarvisAccessibilityService : AccessibilityService() {
     private fun answerCall() {
         val answered = MainActivity.AndroidBridge(MainActivity()).answerPhoneCall()
         if (!answered) {
-            // Fallback por botón visual de contestar
             tapNodeByText("Contestar") || tapNodeByText("Responder") || tapNodeByText("Answer")
         }
     }
@@ -225,6 +221,7 @@ class JarvisAccessibilityService : AccessibilityService() {
         val cleanPhone = phone.replace(Regex("[^0-9+]"), "")
         if (cleanPhone.isNotBlank()) {
             try {
+                @Suppress("DEPRECATION")
                 val smsManager = SmsManager.getDefault()
                 smsManager.sendTextMessage(cleanPhone, null, message, null, null)
                 speak("Mensaje SMS enviado a $contact")
@@ -264,19 +261,16 @@ class JarvisAccessibilityService : AccessibilityService() {
     private fun playSpotify(track: String) {
         val intent = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH).apply {
             putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
-            putExtra(SearchManager_QUERY, track)
+            putExtra("query", track)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         try {
             startActivity(intent)
             speak("Buscando $track en Spotify")
         } catch (e: Exception) {
-            // Fallback a abrir Spotify directo
             openApp("com.spotify.music")
         }
     }
-
-    private const val SearchManager_QUERY = "query"
 
     private fun controlMusic(command: String, track: String) {
         if (track.isNotBlank()) {
