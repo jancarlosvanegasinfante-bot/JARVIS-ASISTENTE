@@ -6,8 +6,21 @@
     <!-- Micrófono para escucha continua -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
-    <!-- Para que "make_call" pueda llamar directo, sin pasar por el marcador -->
+    <!-- Para llamar y contestar llamadas por voz -->
     <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
+
+    <!-- Lectura de contactos reales del celular -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+
+    <!-- Envío de SMS nativos y configuración de Alarmas -->
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+
+    <!-- Encendido de pantalla 24/7 y desbloqueo para comandos de voz -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
 
     <!-- Reconocimiento de voz nativo -->
     <queries>
@@ -79,6 +92,17 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <!-- Servicio de escucha de notificaciones para Modo Moto (Llamadas, WhatsApp, SMS) -->
+        <service
+            android:name=".JarvisNotificationListener"
+            android:label="Jarvis Notification Listener"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
 
     </application>
 </manifest>
