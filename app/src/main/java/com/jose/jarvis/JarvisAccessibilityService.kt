@@ -89,7 +89,7 @@ class JarvisAccessibilityService : AccessibilityService() {
 
                 "play_spotify" -> playSpotify(params.optString("track"))
 
-                "open_app" -> openApp(resolvePackageName(params.optString("appName")))
+                "open_app" -> openApp(params.optString("appName"))
 
                 "close_app" -> closeApp()
 
@@ -293,7 +293,12 @@ class JarvisAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun resolvePackageName(appName: String): String {
+    /**
+     * Atajos rápidos para las apps más comunes (evita tener que escanear
+     * todas las apps instaladas cada vez que pides algo frecuente).
+     * Si el nombre no está aquí, se busca dinámicamente más abajo.
+     */
+    private fun quickPackageShortcut(appName: String): String? {
         val clean = appName.trim().lowercase()
         return when {
             clean.contains("whatsapp") -> "com.whatsapp"
@@ -305,17 +310,79 @@ class JarvisAccessibilityService : AccessibilityService() {
             clean.contains("sms") || clean.contains("mensajes") -> "com.android.mms"
             clean.contains("reloj") || clean.contains("alarma") -> "com.android.deskclock"
             clean.contains("chrome") || clean.contains("navegador") -> "com.android.chrome"
-            else -> appName
+            else -> null
         }
     }
 
-    private fun openApp(packageName: String) {
-        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+    /**
+     * Busca CUALQUIER app instalada por su nombre visible (el que ves en el
+     * launcher, ej "Instagram", "TikTok", "Play Store"), sin importar que no
+     * esté en la lista de atajos rápidos. Esto es lo que permite decir
+     * "abre [cualquier app]" y que funcione con lo que sea que tengas instalado.
+     */
+    private fun findInstalledAppByLabel(appName: String): String? {
+        val target = normalizeForSearch(appName)
+        if (target.isBlank()) return null
+
+        val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val activities = packageManager.queryIntentActivities(launcherIntent, 0)
+
+        var bestMatch: String? = null
+        var bestScore = -1
+
+        for (resolveInfo in activities) {
+            val label = normalizeForSearch(resolveInfo.loadLabel(packageManager).toString())
+            val pkg = resolveInfo.activityInfo.packageName
+
+            val score = when {
+                label == target -> 100                 // coincidencia exacta
+                label.startsWith(target) -> 80          // "insta" -> "instagram"
+                label.contains(target) -> 60            // nombre contenido
+                target.contains(label) && label.length > 2 -> 50
+                else -> -1
+            }
+
+            if (score > bestScore) {
+                bestScore = score
+                bestMatch = pkg
+            }
+        }
+
+        if (bestMatch == null) {
+            Log.w(TAG, "No se encontró ninguna app instalada parecida a: $appName")
+        }
+        return bestMatch
+    }
+
+    /** Quita tildes, mayúsculas y espacios extra para comparar nombres */
+    private fun normalizeForSearch(text: String): String {
+        val normalized = java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFD)
+        return normalized.replace(Regex("\\p{Mn}+"), "").trim().lowercase()
+    }
+
+    private fun openApp(appNameOrPackage: String) {
+        // 1. ¿Es un atajo rápido conocido?
+        val resolved = quickPackageShortcut(appNameOrPackage)
+            // 2. ¿Ya es un nombre de paquete válido tal cual (com.algo.algo)?
+            ?: if (packageManager.getLaunchIntentForPackage(appNameOrPackage) != null) {
+                appNameOrPackage
+            } else {
+                // 3. Búsqueda dinámica entre TODAS las apps instaladas
+                findInstalledAppByLabel(appNameOrPackage)
+            }
+
+        if (resolved == null) {
+            Log.w(TAG, "No se pudo resolver ninguna app para: $appNameOrPackage")
+            return
+        }
+
+        val launchIntent = packageManager.getLaunchIntentForPackage(resolved)
         if (launchIntent != null) {
             launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             startActivity(launchIntent)
+            Log.d(TAG, "Abriendo app: $resolved")
         } else {
-            Log.w(TAG, "Aplicación no encontrada: $packageName")
+            Log.w(TAG, "Se encontró el paquete pero no se pudo lanzar: $resolved")
         }
     }
 
