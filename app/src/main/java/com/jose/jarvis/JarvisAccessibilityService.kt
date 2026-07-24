@@ -167,7 +167,7 @@ class JarvisAccessibilityService : AccessibilityService() {
 
     /** Contestar llamada entrante por voz (Modo Moto) */
     private fun answerCall() {
-        val answered = MainActivity.AndroidBridge(MainActivity()).answerPhoneCall()
+        val answered = MainActivity.instance?.answerPhoneCall() ?: false
         if (!answered) {
             tapNodeByText("Contestar") || tapNodeByText("Responder") || tapNodeByText("Answer")
         }
