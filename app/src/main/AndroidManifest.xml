@@ -5,6 +5,25 @@
     <!-- Micrófono para escucha continua -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!-- Cámara y Linterna -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+
+    <!-- Ubicación GPS -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <!-- Galería / Imágenes / Archivos -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+
+    <!-- Notificaciones (Android 13+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- Para llamar y contestar llamadas por voz -->
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
@@ -28,20 +47,18 @@
         </intent>
     </queries>
 
-    <!-- Servicio en primer plano tipo "microphone" (obligatorio Android 14+) -->
+    <!-- Servicio en primer plano -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 
-    <!-- Para que el servicio arranque de nuevo tras reiniciar el teléfono -->
+    <!-- Reinicio y batería -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-
-    <!-- Ignorar optimización de batería (para no matar el servicio 24/7) -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- Overlay "Jan escuchándote" -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
-    <!-- Internet para hablar con tu backend Gemini en Railway -->
+    <!-- Internet -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
@@ -67,7 +84,7 @@
             </intent-filter>
         </activity>
 
-        <!-- El "brazo" que controla otras apps -->
+        <!-- Accesibilidad -->
         <service
             android:name=".JarvisAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
@@ -80,7 +97,7 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
-        <!-- El "oído" que escucha 24/7 -->
+        <!-- Palabra de activación 24/7 -->
         <service
             android:name=".WakeWordService"
             android:foregroundServiceType="microphone"
@@ -92,7 +109,7 @@
             </intent-filter>
         </receiver>
 
-        <!-- Servicio de escucha de notificaciones para Modo Moto (Llamadas, WhatsApp, SMS) -->
+        <!-- Escucha de Notificaciones -->
         <service
             android:name=".JarvisNotificationListener"
             android:label="Jarvis Notification Listener"
