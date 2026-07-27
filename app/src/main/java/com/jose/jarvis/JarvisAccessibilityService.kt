@@ -106,6 +106,8 @@ class JarvisAccessibilityService : AccessibilityService() {
 
                 "read_notifications" -> performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
 
+                "general_query" -> { /* No requiere acción nativa: la respuesta ya se habla en React vía TTS */ }
+
                 "tap_text" -> tapNodeByText(json.optString("text"))
 
                 "type_text" -> typeText(json.optString("text"))
@@ -117,12 +119,28 @@ class JarvisAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * Detecta automáticamente cuál WhatsApp tienes instalado: el normal
+     * (com.whatsapp) o Business (com.whatsapp.w4b). Prueba primero Business
+     * porque es el que usas tú; si no está, usa el normal.
+     */
+    private fun resolveWhatsAppPackage(): String {
+        val candidates = listOf("com.whatsapp.w4b", "com.whatsapp")
+        for (pkg in candidates) {
+            if (packageManager.getLaunchIntentForPackage(pkg) != null) return pkg
+        }
+        return "com.whatsapp.w4b" // valor por defecto si ninguno resuelve (no debería pasar)
+    }
+
     /** Envío de WhatsApp con fallback inteligente a Deep Link / Accesibilidad */
     private fun sendWhatsApp(contact: String, phone: String, message: String) {
+        val whatsappPkg = resolveWhatsAppPackage()
         val cleanPhone = phone.replace(Regex("[^0-9]"), "")
+
         if (cleanPhone.length >= 7) {
             val uri = Uri.parse("https://api.whatsapp.com/send?phone=$cleanPhone&text=${Uri.encode(message)}")
             val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                setPackage(whatsappPkg) // fuerza que abra TU WhatsApp (Business), no otro
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             try {
@@ -136,7 +154,7 @@ class JarvisAccessibilityService : AccessibilityService() {
             }
         }
 
-        openApp("com.whatsapp")
+        openApp(whatsappPkg)
         handler.postDelayed({
             val target = if (contact.isNotBlank()) contact else phone
             if (tapNodeByText(target)) {
@@ -150,16 +168,26 @@ class JarvisAccessibilityService : AccessibilityService() {
         }, 1800)
     }
 
-    /** Realizar llamada telefónica */
+    /** Realizar llamada telefónica (con fallback si falta el permiso) */
     private fun makeCall(phone: String, contact: String) {
         val targetNum = phone.ifBlank { contact }
         if (targetNum.isBlank()) return
-        val callIntent = Intent(Intent.ACTION_CALL).apply {
+
+        val hasCallPermission = androidx.core.content.ContextCompat.checkSelfPermission(
+            this, android.Manifest.permission.CALL_PHONE
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+        val action = if (hasCallPermission) Intent.ACTION_CALL else Intent.ACTION_DIAL
+        val callIntent = Intent(action).apply {
             data = Uri.parse("tel:${Uri.encode(targetNum)}")
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         try {
             startActivity(callIntent)
+            if (!hasCallPermission) {
+                speak("No tengo permiso de llamadas todavía, te dejé el número listo, solo toca llamar")
+                Log.w(TAG, "Falta permiso CALL_PHONE — abrí el marcador en su lugar. Actívalo en Ajustes > Apps > Jarvis > Permisos > Teléfono")
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error al realizar llamada", e)
         }
@@ -184,7 +212,7 @@ class JarvisAccessibilityService : AccessibilityService() {
         val senderPkg = JarvisNotificationListener.latestMessagePackage
         val senderName = JarvisNotificationListener.latestSenderName
 
-        if (senderPkg == "com.whatsapp") {
+        if (senderPkg == "com.whatsapp" || senderPkg == "com.whatsapp.w4b") {
             sendWhatsApp(contact = senderName, phone = "", message = message)
         } else {
             sendSms(contact = senderName, phone = "", message = message)
@@ -301,7 +329,7 @@ class JarvisAccessibilityService : AccessibilityService() {
     private fun quickPackageShortcut(appName: String): String? {
         val clean = appName.trim().lowercase()
         return when {
-            clean.contains("whatsapp") -> "com.whatsapp"
+            clean.contains("whatsapp") -> resolveWhatsAppPackage()
             clean.contains("spotify") -> "com.spotify.music"
             clean.contains("youtube") -> "com.google.android.youtube"
             clean.contains("waze") -> "com.waze"
