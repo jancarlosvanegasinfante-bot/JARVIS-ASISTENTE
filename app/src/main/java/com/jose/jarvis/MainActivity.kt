@@ -40,17 +40,11 @@ class MainActivity : ComponentActivity() {
     private lateinit var webView: WebView
     private var tts: TextToSpeech? = null
     private var speechRecognizer: SpeechRecognizer? = null
-    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         instance = this
-
-        // 1. Forzar que la pantalla se encienda y desbloquee aunque esté apagada
         configureScreenWakeup()
-
-        // 2. Mantener servicio vivo sin que el ahorro de batería de Android lo mate
-        requestBatteryOptimizationExemption()
 
         webView = WebView(this)
         setContentView(webView)
@@ -59,6 +53,7 @@ class MainActivity : ComponentActivity() {
         webView.settings.domStorageEnabled = true
         webView.settings.mediaPlaybackRequiresUserGesture = false
 
+        // Otorga permisos automáticos a la cámara/micrófono solicitados por el WebView
         webView.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest) {
                 runOnUiThread { request.grant(request.resources) }
@@ -68,9 +63,7 @@ class MainActivity : ComponentActivity() {
         webView.addJavascriptInterface(AndroidBridge(this), "AndroidBridge")
         webView.loadUrl("https://jarvis-voz-asistente-production.up.railway.app")
 
-        // 3. Solicitar TODOS los permisos de Android en pantalla
         requestAllRuntimePermissions()
-        
         startWakeWordServiceIfReady()
         initTextToSpeech()
 
@@ -84,7 +77,7 @@ class MainActivity : ComponentActivity() {
         handleIntentTrigger(intent)
     }
 
-    /** Despierta y enciende la pantalla aun si el celular está bloqueado con pantalla apagada */
+    /** Permite encender la pantalla automáticamente sobre el bloqueo de pantalla */
     private fun configureScreenWakeup() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
@@ -97,38 +90,11 @@ class MainActivity : ComponentActivity() {
                     WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
                     WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
         )
-
-        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        if (wakeLock == null) {
-            wakeLock = powerManager.newWakeLock(
-                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
-                "Jarvis:WakeLockTag"
-            )
-        }
-        wakeLock?.acquire(3000) // Mantiene la pantalla encendida inmediatamente
-    }
-
-    /** Evita que el ahorro de energía nocturno o en segundo plano mate a Jarvis */
-    private fun requestBatteryOptimizationExemption() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
-                try {
-                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                        data = Uri.parse("package:$packageName")
-                    }
-                    startActivity(intent)
-                } catch (e: Exception) {
-                    Log.e(TAG, "No se pudo solicitar la exención de batería", e)
-                }
-            }
-        }
     }
 
     private fun handleIntentTrigger(intent: Intent) {
         if (intent.getBooleanExtra("wake_word_triggered", false)) {
-            Log.d(TAG, "Activado por voz con pantalla apagada!")
-            configureScreenWakeup()
+            Log.d(TAG, "Jarvis activado por palabra clave ('Jan') con pantalla apagada!")
             startNativeListening()
         }
     }
@@ -142,14 +108,11 @@ class MainActivity : ComponentActivity() {
     }
 
     fun speakNative(text: String) {
-        if (tts == null) return
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "jarvis_utterance")
     }
 
     fun startNativeListening() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-            != PackageManager.PERMISSION_GRANTED
-        ) return
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return
 
         runOnUiThread {
             speechRecognizer?.destroy()
@@ -198,9 +161,7 @@ class MainActivity : ComponentActivity() {
     }
 
     fun stopNativeListening() {
-        runOnUiThread {
-            speechRecognizer?.stopListening()
-        }
+        runOnUiThread { speechRecognizer?.stopListening() }
     }
 
     fun getRealContactsJson(): String {
@@ -266,9 +227,7 @@ class MainActivity : ComponentActivity() {
     }
 
     fun answerPhoneCall(): Boolean {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ANSWER_PHONE_CALLS) != PackageManager.PERMISSION_GRANTED) {
-            return false
-        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ANSWER_PHONE_CALLS) != PackageManager.PERMISSION_GRANTED) return false
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val telecomManager = getSystemService(Context.TELECOM_SERVICE) as TelecomManager
@@ -284,7 +243,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Solicita TODOS Y CADA UNO de los permisos requeridos por Android */
+    /** Sollicita TODOS Y CADA UNO de los permisos requeridos por Android */
     private fun requestAllRuntimePermissions() {
         val permissions = mutableListOf(
             Manifest.permission.RECORD_AUDIO,
@@ -294,8 +253,8 @@ class MainActivity : ComponentActivity() {
             Manifest.permission.READ_CONTACTS,
             Manifest.permission.WRITE_CONTACTS,
             Manifest.permission.SEND_SMS,
-            Manifest.permission.READ_SMS,
             Manifest.permission.RECEIVE_SMS,
+            Manifest.permission.READ_SMS,
             Manifest.permission.CAMERA,
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION
@@ -307,7 +266,9 @@ class MainActivity : ComponentActivity() {
             permissions.add(Manifest.permission.READ_MEDIA_VIDEO)
             permissions.add(Manifest.permission.READ_MEDIA_AUDIO)
         } else {
+            @Suppress("DEPRECATION")
             permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+            @Suppress("DEPRECATION")
             permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
 
@@ -319,94 +280,72 @@ class MainActivity : ComponentActivity() {
             ActivityCompat.requestPermissions(this, toRequest.toTypedArray(), PERMISSION_REQ_CODE)
         }
 
-        // Permiso especial de Ventana flotante / Overlay
+        // 1. Ignorar optimización de batería (Para que Android no mate a Jarvis con pantalla apagada)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                try {
+                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                        data = Uri.parse("package:$packageName")
+                    }
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    Log.w(TAG, "No se pudo solicitar ignorar optimizaciones de batería", e)
+                }
+            }
+        }
+
+        // 2. Permiso de Superposición (SYSTEM_ALERT_WINDOW)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
             val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
             startActivity(intent)
         }
 
-        // Permiso especial de Accesibilidad
+        // 3. Permiso de Servicio de Accesibilidad
         if (!isAccessibilityServiceEnabled()) {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+
+        // 4. Permiso de Lectura de Notificaciones
+        if (!isNotificationListenerEnabled()) {
+            startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
         }
     }
 
     fun isAccessibilityServiceEnabled(): Boolean {
-        val enabledServices = Settings.Secure.getString(
-            contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-        ) ?: return false
+        val enabledServices = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false
         return enabledServices.contains(packageName)
     }
 
+    private fun isNotificationListenerEnabled(): Boolean {
+        val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners") ?: return false
+        return flat.contains(packageName)
+    }
+
     private fun startWakeWordServiceIfReady() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-            == PackageManager.PERMISSION_GRANTED
-        ) {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
             val intent = Intent(this, WakeWordService::class.java)
             ContextCompat.startForegroundService(this, intent)
         }
     }
 
     class AndroidBridge(private val activity: MainActivity) {
-
-        @JavascriptInterface
-        fun executeAction(actionJson: String) {
-            JarvisAccessibilityService.instance?.executeAction(actionJson)
-        }
-
-        @JavascriptInterface
-        fun isAccessibilityEnabled(): Boolean {
-            return activity.isAccessibilityServiceEnabled()
-        }
-
-        @JavascriptInterface
-        fun openAccessibilitySettings() {
-            activity.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        }
-
-        @JavascriptInterface
-        fun speak(text: String) {
-            activity.speakNative(text)
-        }
-
-        @JavascriptInterface
-        fun startListening() {
-            activity.startNativeListening()
-        }
-
-        @JavascriptInterface
-        fun stopListening() {
-            activity.stopNativeListening()
-        }
-
-        @JavascriptInterface
-        fun getContacts(): String {
-            return activity.getRealContactsJson()
-        }
-
-        @JavascriptInterface
-        fun getInstalledApps(): String {
-            return activity.getInstalledAppsJson()
-        }
-
-        @JavascriptInterface
-        fun getLatestNotification(): String {
-            return JarvisNotificationListener.getLatestNotificationSummary()
-        }
-
-        @JavascriptInterface
-        fun answerPhoneCall(): Boolean {
-            return activity.answerPhoneCall()
-        }
+        @JavascriptInterface fun executeAction(actionJson: String) { JarvisAccessibilityService.instance?.executeAction(actionJson) }
+        @JavascriptInterface fun isAccessibilityEnabled(): Boolean = activity.isAccessibilityServiceEnabled()
+        @JavascriptInterface fun openAccessibilitySettings() { activity.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+        @JavascriptInterface fun speak(text: String) { activity.speakNative(text) }
+        @JavascriptInterface fun startListening() { activity.startNativeListening() }
+        @JavascriptInterface fun stopListening() { activity.stopNativeListening() }
+        @JavascriptInterface fun getContacts(): String = activity.getRealContactsJson()
+        @JavascriptInterface fun getInstalledApps(): String = activity.getInstalledAppsJson()
+        @JavascriptInterface fun getLatestNotification(): String = JarvisNotificationListener.getLatestNotificationSummary()
+        @JavascriptInterface fun answerPhoneCall(): Boolean = activity.answerPhoneCall()
     }
 
     override fun onDestroy() {
         tts?.stop()
         tts?.shutdown()
         speechRecognizer?.destroy()
-        if (wakeLock?.isHeld == true) {
-            wakeLock?.release()
-        }
         instance = null
         super.onDestroy()
     }
