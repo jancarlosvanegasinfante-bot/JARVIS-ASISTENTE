@@ -2,29 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Micrófono para escucha continua -->
+    <!-- Micrófono para escucha continua 24/7 -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
-    <!-- Cámara y Linterna -->
-    <uses-permission android:name="android.permission.CAMERA" />
-    <uses-feature android:name="android.hardware.camera" android:required="false" />
-    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
-
-    <!-- Ubicación GPS -->
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-
-    <!-- Galería / Imágenes / Archivos -->
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
-    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
-    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
-
-    <!-- Notificaciones (Android 13+) -->
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-
-    <!-- Para llamar y contestar llamadas por voz -->
+    <!-- Para llamar y contestar llamadas por voz (Modo Moto) -->
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
@@ -35,6 +16,25 @@
     <!-- Envío de SMS nativos y configuración de Alarmas -->
     <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+
+    <!-- Ubicación para Clima y Navegación GPS -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <!-- Cámara para fotos y linterna por voz -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <!-- Galería / Archivos (Compatibilidad Android 12 y Android 13+) -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+
+    <!-- Bluetooth y Audio para audífonos/manos libres en Modo Moto -->
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <!-- Encendido de pantalla 24/7 y desbloqueo para comandos de voz -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -47,22 +47,24 @@
         </intent>
     </queries>
 
-    <!-- Servicio en primer plano -->
+    <!-- Servicio en primer plano tipo "microphone" (Obligatorio Android 14+) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 
-    <!-- Reinicio y batería -->
+    <!-- Para que el servicio arranque de nuevo tras reiniciar el teléfono -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- Ignorar optimización de batería (Evita que Android mate a Jarvis en 24/7) -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
-    <!-- Overlay "Jan escuchándote" -->
+    <!-- Overlay / Ventana sobre otras apps -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
-    <!-- Internet -->
+    <!-- Internet para comunicarse con el servidor Gemini -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- Abrir/lanzar otras apps por comando -->
+    <!-- Abrir/lanzar otras apps por comando de voz -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
 
@@ -84,7 +86,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Accesibilidad -->
+        <!-- El "brazo" de Accesibilidad que controla otras apps -->
         <service
             android:name=".JarvisAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
@@ -97,7 +99,7 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
-        <!-- Palabra de activación 24/7 -->
+        <!-- El "oído" que escucha la palabra de activación 24/7 -->
         <service
             android:name=".WakeWordService"
             android:foregroundServiceType="microphone"
@@ -109,7 +111,7 @@
             </intent-filter>
         </receiver>
 
-        <!-- Escucha de Notificaciones -->
+        <!-- Servicio de lectura de notificaciones para Modo Moto -->
         <service
             android:name=".JarvisNotificationListener"
             android:label="Jarvis Notification Listener"
