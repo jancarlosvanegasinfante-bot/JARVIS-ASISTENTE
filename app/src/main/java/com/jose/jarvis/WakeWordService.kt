@@ -11,21 +11,13 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import org.json.JSONObject
 import org.vosk.Model
 import org.vosk.Recognizer
 import org.vosk.android.RecognitionListener
 import org.vosk.android.SpeechService
 import org.vosk.android.StorageService
-import org.json.JSONObject
 
-/**
- * WakeWordService
- *
- * Corre en primer plano (con notificación fija, obligatoria por Android)
- * escuchando el micrófono TODO el tiempo con Vosk (motor offline).
- * En cuanto detecta cualquiera de las variantes fonéticas ("jan", "yan", "juan", "jean", "yean", "jarvis"),
- * enciende la pantalla automáticamente (WakeLock) y dispara MainActivity para iniciar la escucha de comando.
- */
 class WakeWordService : Service(), RecognitionListener {
 
     companion object {
@@ -55,7 +47,7 @@ class WakeWordService : Service(), RecognitionListener {
             val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
             @Suppress("DEPRECATION")
             wakeLock = powerManager.newWakeLock(
-                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.ON_AFTER_RELEASE,
+                PowerManager.FULL_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.ON_AFTER_RELEASE,
                 "JarvisApp:WakeUpLock"
             )
         } catch (e: Exception) {
@@ -66,10 +58,10 @@ class WakeWordService : Service(), RecognitionListener {
     private fun wakeUpScreen() {
         try {
             if (wakeLock?.isHeld == false) {
-                wakeLock?.acquire(5000) // Mantener encendida 5 segundos
+                wakeLock?.acquire(7000) // Mantiene la pantalla encendida durante 7 segundos
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error al encender pantalla", e)
+            Log.e(TAG, "Error encendiendo pantalla", e)
         }
     }
 
@@ -80,7 +72,7 @@ class WakeWordService : Service(), RecognitionListener {
                 startListening()
             },
             { exception ->
-                Log.e(TAG, "Error cargando modelo Vosk", exception)
+                Log.e(TAG, "Error cargando modelo de voz Vosk", exception)
             }
         )
     }
@@ -96,20 +88,31 @@ class WakeWordService : Service(), RecognitionListener {
         }
     }
 
-    override fun onPartialResult(hypothesis: String?) {
-        hypothesis ?: return
-        val text = JSONObject(hypothesis).optString("partial", "").lowercase()
+    private fun checkTextForWakeWord(rawText: String) {
+        val text = rawText.lowercase()
         for (word in WAKE_WORDS) {
             if (text.contains(word)) {
-                Log.d(TAG, "Coincidencia de activación fonética detectada ('$word'): $text")
+                Log.d(TAG, "Activación por palabra clave detectada ('$word'): $text")
                 onWakeWordDetected(word)
                 break
             }
         }
     }
 
-    override fun onResult(hypothesis: String?) {}
+    override fun onPartialResult(hypothesis: String?) {
+        hypothesis ?: return
+        val text = JSONObject(hypothesis).optString("partial", "")
+        checkTextForWakeWord(text)
+    }
+
+    override fun onResult(hypothesis: String?) {
+        hypothesis ?: return
+        val text = JSONObject(hypothesis).optString("text", "")
+        checkTextForWakeWord(text)
+    }
+
     override fun onFinalResult(hypothesis: String?) {}
+
     override fun onError(exception: Exception?) {
         Log.e(TAG, "Error de reconocimiento Vosk", exception)
     }
@@ -131,15 +134,13 @@ class WakeWordService : Service(), RecognitionListener {
 
     private fun buildNotification(): Notification {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID, "Jarvis Escuchando", NotificationManager.IMPORTANCE_LOW
-            )
+            val channel = NotificationChannel(CHANNEL_ID, "Jarvis Escuchando", NotificationManager.IMPORTANCE_LOW)
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(channel)
         }
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Jarvis Activo 24/7")
-            .setContentText("Di \"Jan\", \"Yan\", \"Juan\" o \"Jarvis\" para activar...")
+            .setContentText("Di \"Jan\", \"Yan\" o \"Jarvis\" para activar...")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setOngoing(true)
             .build()
