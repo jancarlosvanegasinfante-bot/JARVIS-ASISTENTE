@@ -5,8 +5,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.database.Cursor
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.ContactsContract
 import android.provider.Settings
 import android.speech.RecognitionListener
@@ -20,6 +22,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -30,15 +33,12 @@ import java.util.Locale
 /**
  * MainActivity
  *
- * Carga la app React (build de Vite / Railway) dentro de un WebView y expone
+ * Carga la app React dentro de un WebView y expone
  * un puente JS <-> Kotlin completo llamado "AndroidBridge".
  *
- * Proporciona:
- *  - Reconocimiento y síntesis de voz nativos.
- *  - Lectura de agenda de contactos reales del celular.
- *  - Obtención de la lista completa de apps instaladas.
- *  - Encendido automático de pantalla al despertar por voz ("Jan").
- *  - Respuesta de llamadas telefónicas y lectura de notificaciones para Modo Moto.
+ * Incluye la gestión total de permisos del dispositivo:
+ *  - Micrófono, Cámara, Galería/Archivos, Ubicación GPS, SMS, Llamadas y Contactos.
+ *  - Permisos especiales: Accesibilidad, Superposición de Pantalla e Ignorar Batería.
  */
 class MainActivity : ComponentActivity() {
 
@@ -63,10 +63,17 @@ class MainActivity : ComponentActivity() {
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
         webView.settings.mediaPlaybackRequiresUserGesture = false
+        webView.settings.allowFileAccess = true
+        webView.settings.allowContentAccess = true
 
+        webView.webViewClient = WebViewClient()
+
+        // Otorga permisos automáticos de cámara/micrófono a la web dentro del WebView
         webView.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest) {
-                runOnUiThread { request.grant(request.resources) }
+                runOnUiThread { 
+                    request.grant(request.resources) 
+                }
             }
         }
 
@@ -266,17 +273,37 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Solicita TODOS los permisos del sistema al iniciar la aplicación */
     private fun requestRuntimePermissions() {
         val permissions = mutableListOf(
             Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.CAMERA,
             Manifest.permission.CALL_PHONE,
             Manifest.permission.READ_PHONE_STATE,
             Manifest.permission.ANSWER_PHONE_CALLS,
             Manifest.permission.READ_CONTACTS,
-            Manifest.permission.SEND_SMS
+            Manifest.permission.SEND_SMS,
+            Manifest.permission.RECEIVE_SMS,
+            Manifest.permission.READ_SMS,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
         )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+
+        // Permisos de Galería / Archivos según la versión de Android
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) { // Android 13+
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+            permissions.add(Manifest.permission.READ_MEDIA_IMAGES)
+            permissions.add(Manifest.permission.READ_MEDIA_VIDEO)
+            permissions.add(Manifest.permission.READ_MEDIA_AUDIO)
+        } else {
+            permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+            permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
+
+        // Permisos de Bluetooth para Android 12+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
+            permissions.add(Manifest.permission.BLUETOOTH_SCAN)
         }
 
         val toRequest = permissions.filter {
@@ -287,8 +314,58 @@ class MainActivity : ComponentActivity() {
             ActivityCompat.requestPermissions(this, toRequest.toTypedArray(), PERMISSION_REQ_CODE)
         }
 
+        checkSpecialPermissions()
+    }
+
+    /** Solicita los permisos especiales que requieren abrir las pantallas de Ajustes de Android */
+    private fun checkSpecialPermissions() {
+        // 1. Servicio de Accesibilidad (Brazo robótico)
         if (!isAccessibilityServiceEnabled()) {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            try {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            } catch (e: Exception) {
+                Log.e(TAG, "Error abriendo ajustes de accesibilidad", e)
+            }
+        }
+
+        // 2. Superposición sobre otras aplicaciones (Overlay / Ventana flotante)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            try {
+                val intent = Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:$packageName")
+                )
+                startActivity(intent)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error pidiendo permiso de superposición", e)
+            }
+        }
+
+        // 3. Exención de optimización de batería (para escucha 24/7 sin que el sistema lo mate)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
+                try {
+                    val intent = Intent(
+                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        Uri.parse("package:$packageName")
+                    )
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error pidiendo exención de optimización de batería", e)
+                }
+            }
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == PERMISSION_REQ_CODE) {
+            startWakeWordServiceIfReady()
         }
     }
 
