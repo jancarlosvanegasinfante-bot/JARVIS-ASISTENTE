@@ -22,7 +22,6 @@ import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -33,12 +32,8 @@ import java.util.Locale
 /**
  * MainActivity
  *
- * Carga la app React dentro de un WebView y expone
- * un puente JS <-> Kotlin completo llamado "AndroidBridge".
- *
- * Incluye la gestión total de permisos del dispositivo:
- *  - Micrófono, Cámara, Galería/Archivos, Ubicación GPS, SMS, Llamadas y Contactos.
- *  - Permisos especiales: Accesibilidad, Superposición de Pantalla e Ignorar Batería.
+ * Carga la app React dentro de un WebView y expone el puente "AndroidBridge".
+ * Maneja solicitudes automáticas de todos los permisos de Android.
  */
 class MainActivity : ComponentActivity() {
 
@@ -63,24 +58,17 @@ class MainActivity : ComponentActivity() {
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
         webView.settings.mediaPlaybackRequiresUserGesture = false
-        webView.settings.allowFileAccess = true
-        webView.settings.allowContentAccess = true
 
-        webView.webViewClient = WebViewClient()
-
-        // Otorga permisos automáticos de cámara/micrófono a la web dentro del WebView
         webView.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest) {
-                runOnUiThread { 
-                    request.grant(request.resources) 
-                }
+                runOnUiThread { request.grant(request.resources) }
             }
         }
 
         webView.addJavascriptInterface(AndroidBridge(this), "AndroidBridge")
         webView.loadUrl("https://jarvis-voz-asistente-production.up.railway.app")
 
-        requestRuntimePermissions()
+        requestAllRuntimePermissions()
         startWakeWordServiceIfReady()
         initTextToSpeech()
 
@@ -110,7 +98,7 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIntentTrigger(intent: Intent) {
         if (intent.getBooleanExtra("wake_word_triggered", false)) {
-            Log.d(TAG, "Jarvis activado por voz en segundo plano!")
+            Log.d(TAG, "Jarvis activado por voz en segundo plano")
             startNativeListening()
         }
     }
@@ -123,77 +111,82 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Habla el texto usando el motor TTS nativo */
     fun speakNative(text: String) {
         if (tts == null) return
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "jarvis_utterance")
     }
 
-    /** Inicia el reconocimiento de voz nativo y manda el resultado al WebView JS */
     fun startNativeListening() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
         ) return
 
         runOnUiThread {
-            speechRecognizer?.destroy()
-            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+            try {
+                speechRecognizer?.destroy()
+                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
 
-            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-CO")
-                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-CO")
+                    putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                }
+
+                speechRecognizer?.setRecognitionListener(object : RecognitionListener {
+                    override fun onReadyForSpeech(params: Bundle?) {
+                        webView.evaluateJavascript("window.onNativeListeningState && window.onNativeListeningState(true)", null)
+                    }
+
+                    override fun onResults(results: Bundle?) {
+                        val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: ""
+                        val escaped = JSONObject.quote(text)
+                        webView.evaluateJavascript("window.onNativeTranscript && window.onNativeTranscript($escaped, true)", null)
+                        webView.evaluateJavascript("window.onNativeListeningState && window.onNativeListeningState(false)", null)
+                    }
+
+                    override fun onPartialResults(partialResults: Bundle?) {
+                        val text = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: ""
+                        val escaped = JSONObject.quote(text)
+                        webView.evaluateJavascript("window.onNativeTranscript && window.onNativeTranscript($escaped, false)", null)
+                    }
+
+                    override fun onError(error: Int) {
+                        Log.w(TAG, "Error en reconocimiento de voz nativo: $error")
+                        webView.evaluateJavascript("window.onNativeListeningState && window.onNativeListeningState(false)", null)
+                    }
+
+                    override fun onEndOfSpeech() {
+                        webView.evaluateJavascript("window.onNativeListeningState && window.onNativeListeningState(false)", null)
+                    }
+
+                    override fun onBeginningOfSpeech() {}
+                    override fun onRmsChanged(rmsdB: Float) {}
+                    override fun onBufferReceived(buffer: ByteArray?) {}
+                    override fun onEvent(eventType: Int, params: Bundle?) {}
+                })
+
+                speechRecognizer?.startListening(intent)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error iniciando SpeechRecognizer", e)
             }
-
-            speechRecognizer?.setRecognitionListener(object : RecognitionListener {
-                override fun onReadyForSpeech(params: Bundle?) {
-                    webView.evaluateJavascript("window.onNativeListeningState && window.onNativeListeningState(true)", null)
-                }
-
-                override fun onResults(results: Bundle?) {
-                    val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: ""
-                    val escaped = JSONObject.quote(text)
-                    webView.evaluateJavascript("window.onNativeTranscript && window.onNativeTranscript($escaped, true)", null)
-                    webView.evaluateJavascript("window.onNativeListeningState && window.onNativeListeningState(false)", null)
-                }
-
-                override fun onPartialResults(partialResults: Bundle?) {
-                    val text = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: ""
-                    val escaped = JSONObject.quote(text)
-                    webView.evaluateJavascript("window.onNativeTranscript && window.onNativeTranscript($escaped, false)", null)
-                }
-
-                override fun onError(error: Int) {
-                    webView.evaluateJavascript("window.onNativeListeningState && window.onNativeListeningState(false)", null)
-                }
-
-                override fun onEndOfSpeech() {
-                    webView.evaluateJavascript("window.onNativeListeningState && window.onNativeListeningState(false)", null)
-                }
-
-                override fun onBeginningOfSpeech() {}
-                override fun onRmsChanged(rmsdB: Float) {}
-                override fun onBufferReceived(buffer: ByteArray?) {}
-                override fun onEvent(eventType: Int, params: Bundle?) {}
-            })
-
-            speechRecognizer?.startListening(intent)
         }
     }
 
     fun stopNativeListening() {
         runOnUiThread {
-            speechRecognizer?.stopListening()
+            try {
+                speechRecognizer?.stopListening()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error al detener SpeechRecognizer", e)
+            }
         }
     }
 
-    /** Lee la lista real de contactos guardados en el teléfono */
     fun getRealContactsJson(): String {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
             return "[]"
         }
         val contactsArray = JSONArray()
-        val contentResolver = contentResolver
         val cursor: Cursor? = contentResolver.query(
             ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
             arrayOf(
@@ -231,7 +224,6 @@ class MainActivity : ComponentActivity() {
         return contactsArray.toString()
     }
 
-    /** Obtiene la lista completa de aplicaciones instaladas en el dispositivo */
     fun getInstalledAppsJson(): String {
         val appsArray = JSONArray()
         val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
@@ -252,7 +244,6 @@ class MainActivity : ComponentActivity() {
         return appsArray.toString()
     }
 
-    /** Responde a una llamada entrante activa sin tocar el teléfono */
     fun answerPhoneCall(): Boolean {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ANSWER_PHONE_CALLS) != PackageManager.PERMISSION_GRANTED) {
             Log.w(TAG, "Permiso ANSWER_PHONE_CALLS denegado")
@@ -273,37 +264,33 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Solicita TODOS los permisos del sistema al iniciar la aplicación */
-    private fun requestRuntimePermissions() {
+    /** Solicita de una sola vez TODOS los permisos en pantalla */
+    private fun requestAllRuntimePermissions() {
         val permissions = mutableListOf(
             Manifest.permission.RECORD_AUDIO,
-            Manifest.permission.CAMERA,
             Manifest.permission.CALL_PHONE,
             Manifest.permission.READ_PHONE_STATE,
             Manifest.permission.ANSWER_PHONE_CALLS,
             Manifest.permission.READ_CONTACTS,
             Manifest.permission.SEND_SMS,
-            Manifest.permission.RECEIVE_SMS,
-            Manifest.permission.READ_SMS,
+            Manifest.permission.CAMERA,
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION
         )
 
-        // Permisos de Galería / Archivos según la versión de Android
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) { // Android 13+
+        // Permisos según versión de Android
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)
             permissions.add(Manifest.permission.READ_MEDIA_IMAGES)
             permissions.add(Manifest.permission.READ_MEDIA_VIDEO)
             permissions.add(Manifest.permission.READ_MEDIA_AUDIO)
         } else {
+            @Suppress("DEPRECATION")
             permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
-            permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
 
-        // Permisos de Bluetooth para Android 12+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
-            permissions.add(Manifest.permission.BLUETOOTH_SCAN)
         }
 
         val toRequest = permissions.filter {
@@ -314,58 +301,23 @@ class MainActivity : ComponentActivity() {
             ActivityCompat.requestPermissions(this, toRequest.toTypedArray(), PERMISSION_REQ_CODE)
         }
 
-        checkSpecialPermissions()
+        requestBatteryOptimizationExemption()
     }
 
-    /** Solicita los permisos especiales que requieren abrir las pantallas de Ajustes de Android */
-    private fun checkSpecialPermissions() {
-        // 1. Servicio de Accesibilidad (Brazo robótico)
-        if (!isAccessibilityServiceEnabled()) {
-            try {
-                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            } catch (e: Exception) {
-                Log.e(TAG, "Error abriendo ajustes de accesibilidad", e)
-            }
-        }
-
-        // 2. Superposición sobre otras aplicaciones (Overlay / Ventana flotante)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
-            try {
-                val intent = Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:$packageName")
-                )
-                startActivity(intent)
-            } catch (e: Exception) {
-                Log.e(TAG, "Error pidiendo permiso de superposición", e)
-            }
-        }
-
-        // 3. Exención de optimización de batería (para escucha 24/7 sin que el sistema lo mate)
+    /** Solicita que Android no apague Jarvis en segundo plano */
+    private fun requestBatteryOptimizationExemption() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
             if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
                 try {
-                    val intent = Intent(
-                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                        Uri.parse("package:$packageName")
-                    )
+                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                        data = Uri.parse("package:$packageName")
+                    }
                     startActivity(intent)
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error pidiendo exención de optimización de batería", e)
+                    Log.w(TAG, "No se pudo solicitar la exención de batería", e)
                 }
             }
-        }
-    }
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == PERMISSION_REQ_CODE) {
-            startWakeWordServiceIfReady()
         }
     }
 
@@ -385,7 +337,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Puente JavaScript expuesto en WebView */
+    /** Puente JavaScript expuesto al WebView (AndroidBridge) */
     class AndroidBridge(private val activity: MainActivity) {
 
         @JavascriptInterface
@@ -401,6 +353,16 @@ class MainActivity : ComponentActivity() {
         @JavascriptInterface
         fun openAccessibilitySettings() {
             activity.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+
+        @JavascriptInterface
+        fun openNotificationSettings() {
+            activity.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+        }
+
+        @JavascriptInterface
+        fun requestPermissionsAgain() {
+            activity.requestAllRuntimePermissions()
         }
 
         @JavascriptInterface
