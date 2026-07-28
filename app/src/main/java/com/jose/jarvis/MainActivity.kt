@@ -243,7 +243,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Sollicita TODOS Y CADA UNO de los permisos requeridos por Android */
+    /** Solicita TODOS los permisos peligrosos (diálogos normales, no rompen nada al repetirse) */
     private fun requestAllRuntimePermissions() {
         val permissions = mutableListOf(
             Manifest.permission.RECORD_AUDIO,
@@ -280,35 +280,48 @@ class MainActivity : ComponentActivity() {
             ActivityCompat.requestPermissions(this, toRequest.toTypedArray(), PERMISSION_REQ_CODE)
         }
 
-        // 1. Ignorar optimización de batería (Para que Android no mate a Jarvis con pantalla apagada)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+        // IMPORTANTE: los permisos "especiales" de abajo (batería, superposición,
+        // accesibilidad, notificaciones) cada uno abre una PANTALLA COMPLETA de
+        // Ajustes, no un simple diálogo. Si se abren varias seguidas cada vez que
+        // abres la app, Android "rebota" entre ellas y nunca te deja llegar al
+        // Dashboard — por eso la voz dejaba de responder. Ahora solo se piden
+        // la PRIMERA vez que abres la app, una por una, y solo si de verdad falta.
+        val prefs = getSharedPreferences("jarvis_prefs", Context.MODE_PRIVATE)
+        val alreadyAskedSpecialPermissions = prefs.getBoolean("special_permissions_asked", false)
+
+        if (!alreadyAskedSpecialPermissions) {
+            requestNextSpecialPermission()
+            prefs.edit().putBoolean("special_permissions_asked", true).apply()
+        }
+    }
+
+    /**
+     * Pide UN SOLO permiso especial pendiente a la vez (el más importante
+     * primero: Accesibilidad, sin la cual nada de control real funciona).
+     * Si el usuario vuelve a abrir la app después de resolver uno, esta
+     * función continúa con el siguiente que falte — nunca dispara varios
+     * de una vez.
+     */
+    fun requestNextSpecialPermission() {
+        when {
+            !isAccessibilityServiceEnabled() -> {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this) -> {
+                startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+            }
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !(getSystemService(Context.POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(packageName) -> {
                 try {
-                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
                         data = Uri.parse("package:$packageName")
-                    }
-                    startActivity(intent)
+                    })
                 } catch (e: Exception) {
                     Log.w(TAG, "No se pudo solicitar ignorar optimizaciones de batería", e)
                 }
             }
-        }
-
-        // 2. Permiso de Superposición (SYSTEM_ALERT_WINDOW)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
-            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
-            startActivity(intent)
-        }
-
-        // 3. Permiso de Servicio de Accesibilidad
-        if (!isAccessibilityServiceEnabled()) {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        }
-
-        // 4. Permiso de Lectura de Notificaciones
-        if (!isNotificationListenerEnabled()) {
-            startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
+            !isNotificationListenerEnabled() -> {
+                startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
+            }
         }
     }
 
@@ -338,6 +351,7 @@ class MainActivity : ComponentActivity() {
         @JavascriptInterface fun stopListening() { activity.stopNativeListening() }
         @JavascriptInterface fun getContacts(): String = activity.getRealContactsJson()
         @JavascriptInterface fun getInstalledApps(): String = activity.getInstalledAppsJson()
+        @JavascriptInterface fun retryPermissionSetup() { activity.requestNextSpecialPermission() }
         @JavascriptInterface fun getLatestNotification(): String = JarvisNotificationListener.getLatestNotificationSummary()
         @JavascriptInterface fun answerPhoneCall(): Boolean = activity.answerPhoneCall()
     }
