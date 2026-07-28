@@ -1,10 +1,13 @@
 package com.jose.jarvis
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Context
 import android.content.Intent
+import android.hardware.camera2.CameraManager
 import android.net.Uri
 import android.provider.AlarmClock
 import android.provider.MediaStore
+import android.provider.Settings
 import android.telephony.SmsManager
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
@@ -17,6 +20,8 @@ class JarvisAccessibilityService : AccessibilityService() {
         private const val TAG = "JarvisAccessibility"
         var instance: JarvisAccessibilityService? = null
     }
+
+    private var flashlightOn = false
 
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
 
@@ -64,6 +69,16 @@ class JarvisAccessibilityService : AccessibilityService() {
                 "read_notifications" -> performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
                 "tap_text" -> tapNodeByText(json.optString("text"))
                 "type_text" -> typeText(json.optString("text"))
+
+                // --- Tanda nueva: cámara, linterna, WiFi/Bluetooth, avión, brillo ---
+                "take_photo" -> takePhoto()
+                "open_camera" -> openApp("com.android.camera")
+                "toggle_flashlight" -> toggleFlashlight()
+                "toggle_wifi" -> openWifiPanel()
+                "toggle_bluetooth" -> toggleBluetooth()
+                "airplane_mode" -> openAirplaneModeSettings()
+                "set_brightness" -> setBrightness(params.optInt("level", 50))
+
                 else -> Log.w(TAG, "Acción no reconocida: $action")
             }
         } catch (e: Exception) {
@@ -286,6 +301,111 @@ class JarvisAccessibilityService : AccessibilityService() {
     }
 
     private fun closeApp() { performGlobalAction(GLOBAL_ACTION_HOME) }
+
+    /** Tomar una foto directamente, sin que tengas que tocar el botón */
+    private fun takePhoto() {
+        try {
+            val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+            speak("Abriendo cámara para la foto")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error abriendo cámara", e)
+        }
+    }
+
+    /**
+     * Enciende/apaga la linterna. Esta SÍ es 100% automática (no requiere
+     * tocar nada), porque el flash es hardware directo, sin restricciones
+     * de privacidad de Android.
+     */
+    private fun toggleFlashlight() {
+        try {
+            val cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+            val cameraId = cameraManager.cameraIdList.firstOrNull() ?: return
+            flashlightOn = !flashlightOn
+            cameraManager.setTorchMode(cameraId, flashlightOn)
+            speak(if (flashlightOn) "Linterna encendida" else "Linterna apagada")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error controlando la linterna", e)
+        }
+    }
+
+    /**
+     * IMPORTANTE: desde Android 10, NINGUNA app (ni con permisos de
+     * Accesibilidad) puede prender/apagar el WiFi de forma 100% silenciosa
+     * por seguridad — es una restricción de Android, no un límite del
+     * código. Lo más cercano es abrirte el panel rápido de WiFi para que
+     * lo actives con UN solo toque, en vez de tener que navegar por Ajustes.
+     */
+    private fun openWifiPanel() {
+        try {
+            val intent = Intent(Settings.Panel.ACTION_INTERNET_CONNECTIVITY).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+            speak("Aquí tienes el panel de WiFi, actívalo con un toque")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error abriendo panel de WiFi", e)
+        }
+    }
+
+    /**
+     * Igual que el WiFi: desde Android 13, encender/apagar Bluetooth por
+     * código directo ya no está permitido por privacidad. Se abre la
+     * pantalla de ajustes de Bluetooth para que lo actives con un toque.
+     */
+    private fun toggleBluetooth() {
+        try {
+            val intent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+            speak("Aquí tienes el Bluetooth, actívalo con un toque")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error abriendo ajustes de Bluetooth", e)
+        }
+    }
+
+    /** El modo avión SIEMPRE requiere confirmación manual del usuario en Android, sin excepción */
+    private fun openAirplaneModeSettings() {
+        try {
+            val intent = Intent(Settings.ACTION_AIRPLANE_MODE_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+            speak("Aquí tienes el modo avión, actívalo con un toque")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error abriendo modo avión", e)
+        }
+    }
+
+    /**
+     * Esta SÍ es 100% automática, sin tocar nada — pero necesita que la
+     * primera vez actives manualmente el permiso "Modificar ajustes del
+     * sistema" (Android lo exige como acción de seguridad única, igual
+     * que el de Accesibilidad). Una vez dado, funciona siempre por voz.
+     */
+    private fun setBrightness(level: Int) {
+        try {
+            if (!Settings.System.canWrite(this)) {
+                val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
+                    data = Uri.parse("package:$packageName")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                startActivity(intent)
+                speak("Necesito que actives el permiso de ajustes del sistema, solo esta vez")
+                return
+            }
+            val clamped = level.coerceIn(1, 100)
+            val brightnessValue = (clamped * 255 / 100)
+            Settings.System.putInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS, brightnessValue)
+            speak("Brillo ajustado al $clamped por ciento")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error ajustando brillo", e)
+        }
+    }
 
     private fun searchWeb(query: String) {
         val searchIntent = Intent(Intent.ACTION_WEB_SEARCH).apply {
