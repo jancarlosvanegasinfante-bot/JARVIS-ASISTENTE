@@ -7,7 +7,9 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -25,11 +27,15 @@ class WakeWordService : Service(), RecognitionListener {
         private const val CHANNEL_ID = "jarvis_wakeword_channel"
         private const val NOTIF_ID = 42
         private val WAKE_WORDS = listOf("jan", "yan", "juan", "jean", "yean", "jarvis")
+        private const val COOLDOWN_MS = 4000L
     }
 
     private var model: Model? = null
     private var speechService: SpeechService? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var lastTriggerTime: Long = 0
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var isPausedForCommand = false
 
     override fun onCreate() {
         super.onCreate()
@@ -58,7 +64,7 @@ class WakeWordService : Service(), RecognitionListener {
     private fun wakeUpScreen() {
         try {
             if (wakeLock?.isHeld == false) {
-                wakeLock?.acquire(7000) // Mantiene la pantalla encendida durante 7 segundos
+                wakeLock?.acquire(7000)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error encendiendo pantalla", e)
@@ -78,20 +84,35 @@ class WakeWordService : Service(), RecognitionListener {
     }
 
     private fun startListening() {
+        if (isPausedForCommand) return
         try {
+            speechService?.stop()
             val rec = Recognizer(model, 16000.0f)
             speechService = SpeechService(rec, 16000.0f)
             speechService?.startListening(this)
-            Log.d(TAG, "Jarvis escuchando 24/7 con palabras clave: $WAKE_WORDS...")
+            Log.d(TAG, "Jarvis escuchando 24/7 activo con palabras clave: $WAKE_WORDS...")
         } catch (e: Exception) {
             Log.e(TAG, "Error iniciando escucha Vosk", e)
+            scheduleRestartListening(3000)
         }
     }
 
+    private fun scheduleRestartListening(delayMs: Long) {
+        mainHandler.postDelayed({
+            isPausedForCommand = false
+            startListening()
+        }, delayMs)
+    }
+
     private fun checkTextForWakeWord(rawText: String) {
+        if (isPausedForCommand) return
+        val now = System.currentTimeMillis()
+        if (now - lastTriggerTime < COOLDOWN_MS) return
+
         val text = rawText.lowercase()
         for (word in WAKE_WORDS) {
             if (text.contains(word)) {
+                lastTriggerTime = now
                 Log.d(TAG, "Activación por palabra clave detectada ('$word'): $text")
                 onWakeWordDetected(word)
                 break
@@ -114,14 +135,18 @@ class WakeWordService : Service(), RecognitionListener {
     override fun onFinalResult(hypothesis: String?) {}
 
     override fun onError(exception: Exception?) {
-        Log.e(TAG, "Error de reconocimiento Vosk", exception)
+        Log.e(TAG, "Error en Vosk, reiniciando escucha...", exception)
+        scheduleRestartListening(2000)
     }
 
     override fun onTimeout() {
-        speechService?.startListening(this)
+        startListening()
     }
 
     private fun onWakeWordDetected(matchedWord: String) {
+        isPausedForCommand = true
+        speechService?.stop()
+
         wakeUpScreen()
 
         val intent = Intent(this, MainActivity::class.java).apply {
@@ -130,6 +155,9 @@ class WakeWordService : Service(), RecognitionListener {
             putExtra("matched_word", matchedWord)
         }
         startActivity(intent)
+
+        // Reiniciar escucha 24/7 automáticamente tras 6 segundos
+        scheduleRestartListening(6000)
     }
 
     private fun buildNotification(): Notification {
@@ -140,7 +168,7 @@ class WakeWordService : Service(), RecognitionListener {
         }
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Jarvis Activo 24/7")
-            .setContentText("Di \"Jan\", \"Yan\" o \"Jarvis\" para activar...")
+            .setContentText("Di \"Jan\" o \"Jarvis\" para activar...")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setOngoing(true)
             .build()
