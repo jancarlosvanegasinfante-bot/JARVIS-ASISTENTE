@@ -4,12 +4,14 @@ import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.Intent
 import android.hardware.camera2.CameraManager
+import android.media.AudioManager
 import android.net.Uri
 import android.provider.AlarmClock
 import android.provider.MediaStore
 import android.provider.Settings
 import android.telephony.SmsManager
 import android.util.Log
+import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import org.json.JSONObject
@@ -22,7 +24,6 @@ class JarvisAccessibilityService : AccessibilityService() {
     }
 
     private var flashlightOn = false
-
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
 
     override fun onServiceConnected() {
@@ -56,11 +57,15 @@ class JarvisAccessibilityService : AccessibilityService() {
                 "answer_call" -> answerCall()
                 "who_is_calling", "who_messaged" -> readLatestNotification()
                 "reply_message" -> replyLatestMessage(params.optString("message"))
-                "set_reminder", "set_alarm" -> setAlarm(time = params.optString("time"), title = params.optString("title", "Alarma Jarvis"))
+                "set_alarm" -> setAlarm(time = params.optString("time"), title = params.optString("title", "Alarma Jarvis"))
+                "set_timer" -> setTimer(
+                    seconds = params.optInt("seconds", params.optInt("minutes", 1) * 60),
+                    title = params.optString("title", "Temporizador Jarvis")
+                )
                 "send_sms" -> sendSms(contact = params.optString("contact"), phone = params.optString("phoneNumber"), message = params.optString("message"))
                 "play_youtube" -> playYouTube(params.optString("query"))
                 "play_spotify" -> playSpotify(params.optString("track"))
-                "open_app" -> openApp(params.optString("appName"))
+                "open_app" -> openApp(params.optString("appName"), params.optString("packageName"))
                 "close_app" -> closeApp()
                 "go_home" -> performGlobalAction(GLOBAL_ACTION_HOME)
                 "go_back" -> performGlobalAction(GLOBAL_ACTION_BACK)
@@ -70,9 +75,8 @@ class JarvisAccessibilityService : AccessibilityService() {
                 "tap_text" -> tapNodeByText(json.optString("text"))
                 "type_text" -> typeText(json.optString("text"))
 
-                // --- Tanda nueva: cámara, linterna, WiFi/Bluetooth, avión, brillo ---
                 "take_photo" -> takePhoto()
-                "open_camera" -> openApp("com.android.camera")
+                "open_camera" -> openApp("com.android.camera", "")
                 "toggle_flashlight" -> toggleFlashlight()
                 "toggle_wifi" -> openWifiPanel()
                 "toggle_bluetooth" -> toggleBluetooth()
@@ -96,7 +100,8 @@ class JarvisAccessibilityService : AccessibilityService() {
 
     private fun sendWhatsApp(contact: String, phone: String, message: String) {
         val whatsappPkg = resolveWhatsAppPackage()
-        val cleanPhone = phone.replace(Regex("[^0-9]"), "")
+        val targetPhone = if (phone.isNotBlank()) phone else (MainActivity.instance?.resolveContactPhone(contact) ?: "")
+        val cleanPhone = targetPhone.replace(Regex("[^0-9]"), "")
 
         if (cleanPhone.length >= 7) {
             val uri = Uri.parse("https://api.whatsapp.com/send?phone=$cleanPhone&text=${Uri.encode(message)}")
@@ -109,11 +114,11 @@ class JarvisAccessibilityService : AccessibilityService() {
                 handler.postDelayed({ tapNodeByText("Enviar") || tapNodeByText("Send") }, 2000)
                 return
             } catch (e: Exception) {
-                Log.w(TAG, "Fallo al abrir Deep Link de WhatsApp, intentando fallback...", e)
+                Log.w(TAG, "Fallo Deep Link WhatsApp, realizando fallback por interfaz...", e)
             }
         }
 
-        openApp(whatsappPkg)
+        openApp(whatsappPkg, "")
         handler.postDelayed({
             val target = if (contact.isNotBlank()) contact else phone
             if (tapNodeByText(target)) {
@@ -126,8 +131,14 @@ class JarvisAccessibilityService : AccessibilityService() {
     }
 
     private fun makeCall(phone: String, contact: String) {
-        val targetNum = phone.ifBlank { contact }
-        if (targetNum.isBlank()) return
+        var targetNum = phone.replace(Regex("[^0-9+]"), "")
+        if (targetNum.isBlank() && contact.isNotBlank()) {
+            targetNum = MainActivity.instance?.resolveContactPhone(contact) ?: ""
+        }
+        if (targetNum.isBlank()) {
+            speak("No encontré el número de teléfono para $contact")
+            return
+        }
 
         val hasCallPermission = androidx.core.content.ContextCompat.checkSelfPermission(
             this, android.Manifest.permission.CALL_PHONE
@@ -140,6 +151,7 @@ class JarvisAccessibilityService : AccessibilityService() {
         }
         try {
             startActivity(callIntent)
+            speak("Llamando a ${if (contact.isNotBlank()) contact else targetNum}")
         } catch (e: Exception) {
             Log.e(TAG, "Error realizando llamada", e)
         }
@@ -192,17 +204,38 @@ class JarvisAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun setTimer(seconds: Int, title: String) {
+        val intent = Intent(AlarmClock.ACTION_SET_TIMER).apply {
+            putExtra(AlarmClock.EXTRA_LENGTH, seconds)
+            putExtra(AlarmClock.EXTRA_MESSAGE, title)
+            putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            startActivity(intent)
+            val mins = seconds / 60
+            val secs = seconds % 60
+            val msg = if (mins > 0) "$mins minutos" + (if (secs > 0) " con $secs segundos" else "") else "$secs segundos"
+            speak("Temporizador configurado por $msg")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error configurando temporizador", e)
+        }
+    }
+
     private fun sendSms(contact: String, phone: String, message: String) {
-        val cleanPhone = phone.replace(Regex("[^0-9+]"), "")
+        var cleanPhone = phone.replace(Regex("[^0-9+]"), "")
+        if (cleanPhone.isBlank() && contact.isNotBlank()) {
+            cleanPhone = MainActivity.instance?.resolveContactPhone(contact) ?: ""
+        }
         if (cleanPhone.isNotBlank()) {
             try {
                 @Suppress("DEPRECATION")
                 val smsManager = SmsManager.getDefault()
                 smsManager.sendTextMessage(cleanPhone, null, message, null, null)
-                speak("Mensaje SMS enviado a $contact")
+                speak("Mensaje SMS enviado")
                 return
             } catch (e: Exception) {
-                Log.w(TAG, "Error en SmsManager directo, intentando por Intent...", e)
+                Log.w(TAG, "Error en SmsManager directo, usando intent...", e)
             }
         }
 
@@ -226,16 +259,27 @@ class JarvisAccessibilityService : AccessibilityService() {
             putExtra("query", track)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        try { startActivity(intent); speak("Buscando $track en Spotify") } catch (e: Exception) { openApp("com.spotify.music") }
+        try { startActivity(intent); speak("Buscando $track en Spotify") } catch (e: Exception) { openApp("com.spotify.music", "") }
     }
 
     private fun controlMusic(command: String, track: String) {
         if (track.isNotBlank()) { playSpotify(track); return }
-        val audioManager = getSystemService(AUDIO_SERVICE) as android.media.AudioManager
+        val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
         when (command) {
-            "volume_up" -> audioManager.adjustVolume(android.media.AudioManager.ADJUST_RAISE, 0)
-            "volume_down" -> audioManager.adjustVolume(android.media.AudioManager.ADJUST_LOWER, 0)
+            "play", "pause", "toggle" -> sendMediaKeyEvent(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
+            "next" -> sendMediaKeyEvent(KeyEvent.KEYCODE_MEDIA_NEXT)
+            "prev", "previous" -> sendMediaKeyEvent(KeyEvent.KEYCODE_MEDIA_PREVIOUS)
+            "volume_up" -> audioManager.adjustVolume(AudioManager.ADJUST_RAISE, AudioManager.FLAG_SHOW_UI)
+            "volume_down" -> audioManager.adjustVolume(AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI)
         }
+    }
+
+    private fun sendMediaKeyEvent(keyCode: Int) {
+        val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+        val downEvent = KeyEvent(KeyEvent.ACTION_DOWN, keyCode)
+        val upEvent = KeyEvent(KeyEvent.ACTION_UP, keyCode)
+        audioManager.dispatchMediaKeyEvent(downEvent)
+        audioManager.dispatchMediaKeyEvent(upEvent)
     }
 
     private fun quickPackageShortcut(appName: String): String? {
@@ -286,12 +330,18 @@ class JarvisAccessibilityService : AccessibilityService() {
         return normalized.replace(Regex("\\p{Mn}+"), "").trim().lowercase()
     }
 
-    private fun openApp(appNameOrPackage: String) {
-        val resolved = quickPackageShortcut(appNameOrPackage)
-            ?: if (packageManager.getLaunchIntentForPackage(appNameOrPackage) != null) appNameOrPackage
-            else findInstalledAppByLabel(appNameOrPackage)
+    private fun openApp(appNameOrPackage: String, packageName: String) {
+        val resolved = when {
+            packageName.isNotBlank() && packageManager.getLaunchIntentForPackage(packageName) != null -> packageName
+            else -> quickPackageShortcut(appNameOrPackage)
+                ?: if (packageManager.getLaunchIntentForPackage(appNameOrPackage) != null) appNameOrPackage
+                else findInstalledAppByLabel(appNameOrPackage)
+        }
 
-        if (resolved == null) return
+        if (resolved == null) {
+            speak("No pude encontrar la aplicación $appNameOrPackage")
+            return
+        }
 
         val launchIntent = packageManager.getLaunchIntentForPackage(resolved)
         if (launchIntent != null) {
@@ -302,7 +352,6 @@ class JarvisAccessibilityService : AccessibilityService() {
 
     private fun closeApp() { performGlobalAction(GLOBAL_ACTION_HOME) }
 
-    /** Tomar una foto directamente, sin que tengas que tocar el botón */
     private fun takePhoto() {
         try {
             val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
@@ -315,11 +364,6 @@ class JarvisAccessibilityService : AccessibilityService() {
         }
     }
 
-    /**
-     * Enciende/apaga la linterna. Esta SÍ es 100% automática (no requiere
-     * tocar nada), porque el flash es hardware directo, sin restricciones
-     * de privacidad de Android.
-     */
     private fun toggleFlashlight() {
         try {
             val cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
@@ -332,61 +376,42 @@ class JarvisAccessibilityService : AccessibilityService() {
         }
     }
 
-    /**
-     * IMPORTANTE: desde Android 10, NINGUNA app (ni con permisos de
-     * Accesibilidad) puede prender/apagar el WiFi de forma 100% silenciosa
-     * por seguridad — es una restricción de Android, no un límite del
-     * código. Lo más cercano es abrirte el panel rápido de WiFi para que
-     * lo actives con UN solo toque, en vez de tener que navegar por Ajustes.
-     */
     private fun openWifiPanel() {
         try {
             val intent = Intent(Settings.Panel.ACTION_INTERNET_CONNECTIVITY).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             startActivity(intent)
-            speak("Aquí tienes el panel de WiFi, actívalo con un toque")
+            speak("Aquí tienes el panel de WiFi")
         } catch (e: Exception) {
-            Log.e(TAG, "Error abriendo panel de WiFi", e)
+            Log.e(TAG, "Error abriendo panel WiFi", e)
         }
     }
 
-    /**
-     * Igual que el WiFi: desde Android 13, encender/apagar Bluetooth por
-     * código directo ya no está permitido por privacidad. Se abre la
-     * pantalla de ajustes de Bluetooth para que lo actives con un toque.
-     */
     private fun toggleBluetooth() {
         try {
             val intent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             startActivity(intent)
-            speak("Aquí tienes el Bluetooth, actívalo con un toque")
+            speak("Aquí tienes los ajustes de Bluetooth")
         } catch (e: Exception) {
-            Log.e(TAG, "Error abriendo ajustes de Bluetooth", e)
+            Log.e(TAG, "Error abriendo ajustes Bluetooth", e)
         }
     }
 
-    /** El modo avión SIEMPRE requiere confirmación manual del usuario en Android, sin excepción */
     private fun openAirplaneModeSettings() {
         try {
             val intent = Intent(Settings.ACTION_AIRPLANE_MODE_SETTINGS).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             startActivity(intent)
-            speak("Aquí tienes el modo avión, actívalo con un toque")
+            speak("Aquí tienes los ajustes de Modo Avión")
         } catch (e: Exception) {
             Log.e(TAG, "Error abriendo modo avión", e)
         }
     }
 
-    /**
-     * Esta SÍ es 100% automática, sin tocar nada — pero necesita que la
-     * primera vez actives manualmente el permiso "Modificar ajustes del
-     * sistema" (Android lo exige como acción de seguridad única, igual
-     * que el de Accesibilidad). Una vez dado, funciona siempre por voz.
-     */
     private fun setBrightness(level: Int) {
         try {
             if (!Settings.System.canWrite(this)) {
@@ -395,7 +420,7 @@ class JarvisAccessibilityService : AccessibilityService() {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 startActivity(intent)
-                speak("Necesito que actives el permiso de ajustes del sistema, solo esta vez")
+                speak("Necesito el permiso para modificar ajustes del sistema")
                 return
             }
             val clamped = level.coerceIn(1, 100)
