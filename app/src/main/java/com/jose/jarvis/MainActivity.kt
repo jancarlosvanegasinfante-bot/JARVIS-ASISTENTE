@@ -53,7 +53,6 @@ class MainActivity : ComponentActivity() {
         webView.settings.domStorageEnabled = true
         webView.settings.mediaPlaybackRequiresUserGesture = false
 
-        // Otorga permisos automáticos a la cámara/micrófono solicitados por el WebView
         webView.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest) {
                 runOnUiThread { request.grant(request.resources) }
@@ -77,7 +76,6 @@ class MainActivity : ComponentActivity() {
         handleIntentTrigger(intent)
     }
 
-    /** Permite encender la pantalla automáticamente sobre el bloqueo de pantalla */
     private fun configureScreenWakeup() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
@@ -164,6 +162,35 @@ class MainActivity : ComponentActivity() {
         runOnUiThread { speechRecognizer?.stopListening() }
     }
 
+    fun resolveContactPhone(contactName: String): String {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED || contactName.isBlank()) {
+            return ""
+        }
+        val targetName = contactName.lowercase().trim()
+        var matchedPhone = ""
+
+        val cursor: Cursor? = contentResolver.query(
+            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+            arrayOf(
+                ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                ContactsContract.CommonDataKinds.Phone.NUMBER
+            ),
+            "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?",
+            arrayOf("%$targetName%"),
+            null
+        )
+
+        cursor?.use {
+            if (it.moveToFirst()) {
+                val numberIndex = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                if (numberIndex >= 0) {
+                    matchedPhone = it.getString(numberIndex)
+                }
+            }
+        }
+        return matchedPhone
+    }
+
     fun getRealContactsJson(): String {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
             return "[]"
@@ -243,7 +270,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Solicita TODOS los permisos peligrosos (diálogos normales, no rompen nada al repetirse) */
     private fun requestAllRuntimePermissions() {
         val permissions = mutableListOf(
             Manifest.permission.RECORD_AUDIO,
@@ -280,12 +306,6 @@ class MainActivity : ComponentActivity() {
             ActivityCompat.requestPermissions(this, toRequest.toTypedArray(), PERMISSION_REQ_CODE)
         }
 
-        // IMPORTANTE: los permisos "especiales" de abajo (batería, superposición,
-        // accesibilidad, notificaciones) cada uno abre una PANTALLA COMPLETA de
-        // Ajustes, no un simple diálogo. Si se abren varias seguidas cada vez que
-        // abres la app, Android "rebota" entre ellas y nunca te deja llegar al
-        // Dashboard — por eso la voz dejaba de responder. Ahora solo se piden
-        // la PRIMERA vez que abres la app, una por una, y solo si de verdad falta.
         val prefs = getSharedPreferences("jarvis_prefs", Context.MODE_PRIVATE)
         val alreadyAskedSpecialPermissions = prefs.getBoolean("special_permissions_asked", false)
 
@@ -295,13 +315,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /**
-     * Pide UN SOLO permiso especial pendiente a la vez (el más importante
-     * primero: Accesibilidad, sin la cual nada de control real funciona).
-     * Si el usuario vuelve a abrir la app después de resolver uno, esta
-     * función continúa con el siguiente que falte — nunca dispara varios
-     * de una vez.
-     */
     fun requestNextSpecialPermission() {
         when {
             !isAccessibilityServiceEnabled() -> {
@@ -354,6 +367,14 @@ class MainActivity : ComponentActivity() {
         @JavascriptInterface fun retryPermissionSetup() { activity.requestNextSpecialPermission() }
         @JavascriptInterface fun getLatestNotification(): String = JarvisNotificationListener.getLatestNotificationSummary()
         @JavascriptInterface fun answerPhoneCall(): Boolean = activity.answerPhoneCall()
+        @JavascriptInterface fun resolveContactPhone(name: String): String = activity.resolveContactPhone(name)
+
+        @JavascriptInterface fun setProactiveMode(enabled: Boolean) {
+            JarvisNotificationListener.proactiveModeEnabled = enabled
+            val prefs = activity.getSharedPreferences("jarvis_prefs", Context.MODE_PRIVATE)
+            prefs.edit().putBoolean("proactive_mode", enabled).apply()
+        }
+        @JavascriptInterface fun isProactiveModeEnabled(): Boolean = JarvisNotificationListener.proactiveModeEnabled
     }
 
     override fun onDestroy() {
