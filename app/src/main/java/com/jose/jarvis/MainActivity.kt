@@ -356,7 +356,16 @@ class MainActivity : ComponentActivity() {
     }
 
     class AndroidBridge(private val activity: MainActivity) {
-        @JavascriptInterface fun executeAction(actionJson: String) { JarvisAccessibilityService.instance?.executeAction(actionJson) }
+        @JavascriptInterface
+        fun executeAction(actionJson: String) {
+            val service = JarvisAccessibilityService.instance
+            if (service == null) {
+                activity.speakNative("El servicio de accesibilidad no está conectado. Ve a Ajustes, Accesibilidad, Jarvis, y actívalo apagándolo y prendiéndolo de nuevo")
+                Log.w("MainActivity", "executeAction llamado pero JarvisAccessibilityService.instance es null")
+                return
+            }
+            service.executeAction(actionJson)
+        }
         @JavascriptInterface fun isAccessibilityEnabled(): Boolean = activity.isAccessibilityServiceEnabled()
         @JavascriptInterface fun openAccessibilitySettings() { activity.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         @JavascriptInterface fun speak(text: String) { activity.speakNative(text) }
