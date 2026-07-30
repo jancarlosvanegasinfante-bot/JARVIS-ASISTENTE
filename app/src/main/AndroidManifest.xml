@@ -74,7 +74,7 @@
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
-    <!-- Ajustar brillo de pantalla (requiere activación manual una sola vez) -->
+    <!-- Ajustar brillo de pantalla -->
     <uses-permission android:name="android.permission.WRITE_SETTINGS" tools:ignore="ProtectedPermissions" />
 
     <application
@@ -94,6 +94,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Botón flotante persistente sobre cualquier pantalla -->
+        <service
+            android:name=".FloatingWidgetService"
+            android:enabled="true"
+            android:exported="false" />
 
         <!-- Brazo robótico de Accesibilidad -->
         <service
