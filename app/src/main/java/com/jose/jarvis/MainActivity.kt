@@ -64,6 +64,7 @@ class MainActivity : ComponentActivity() {
 
         requestAllRuntimePermissions()
         startWakeWordServiceIfReady()
+        startFloatingWidgetIfAllowed()
         initTextToSpeech()
 
         intent?.let { handleIntentTrigger(it) }
@@ -160,6 +161,18 @@ class MainActivity : ComponentActivity() {
 
     fun stopNativeListening() {
         runOnUiThread { speechRecognizer?.stopListening() }
+    }
+
+    fun startFloatingWidgetIfAllowed() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && Settings.canDrawOverlays(this)) {
+            val intent = Intent(this, FloatingWidgetService::class.java)
+            startService(intent)
+        }
+    }
+
+    fun stopFloatingWidget() {
+        val intent = Intent(this, FloatingWidgetService::class.java)
+        stopService(intent)
     }
 
     fun resolveContactPhone(contactName: String): String {
@@ -377,6 +390,9 @@ class MainActivity : ComponentActivity() {
         @JavascriptInterface fun getLatestNotification(): String = JarvisNotificationListener.getLatestNotificationSummary()
         @JavascriptInterface fun answerPhoneCall(): Boolean = activity.answerPhoneCall()
         @JavascriptInterface fun resolveContactPhone(name: String): String = activity.resolveContactPhone(name)
+
+        @JavascriptInterface fun startFloatingButton() { activity.startFloatingWidgetIfAllowed() }
+        @JavascriptInterface fun stopFloatingButton() { activity.stopFloatingWidget() }
 
         @JavascriptInterface fun setProactiveMode(enabled: Boolean) {
             JarvisNotificationListener.proactiveModeEnabled = enabled
