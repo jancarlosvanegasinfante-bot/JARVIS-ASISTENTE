@@ -37,7 +37,8 @@ class MainActivity : ComponentActivity() {
         var instance: MainActivity? = null
     }
 
-    private lateinit var webView: WebView
+    // ARREGLADO: Se quitó 'private' para que FloatingWidgetService pueda acceder sin problemas
+    lateinit var webView: WebView
     private var tts: TextToSpeech? = null
     private var speechRecognizer: SpeechRecognizer? = null
 
