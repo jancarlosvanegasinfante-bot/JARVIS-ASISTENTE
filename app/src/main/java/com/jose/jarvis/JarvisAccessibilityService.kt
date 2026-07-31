@@ -407,9 +407,37 @@ class JarvisAccessibilityService : AccessibilityService() {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             startActivity(intent)
-            speak("Abriendo cámara para la foto")
+            speak("Tomando la foto")
+            // Toca automáticamente el botón de disparo de la cámara (varía según la app, se intenta por ids comunes y por descripción).
+            handler.postDelayed({ retryTapShutter(10, 500) }, 1200)
         } catch (e: Exception) {
             Log.e(TAG, "Error abriendo cámara", e)
+        }
+    }
+
+    private fun tapShutterButton(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val idCandidates = listOf(
+            "com.android.camera:id/shutter_button",
+            "com.android.camera2:id/shutter_button",
+            "com.google.android.GoogleCamera:id/shutter_button",
+            "com.miui.camera:id/btn_shutter",
+        )
+        for (id in idCandidates) {
+            val nodes = root.findAccessibilityNodeInfosByViewId(id)
+            if (nodes.isNotEmpty()) {
+                val clickable = findClickableParent(nodes[0]) ?: nodes[0]
+                clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                return true
+            }
+        }
+        return tapNodeByAnyMatch("shutter", "capturar", "capture", "tomar foto", "photo capture")
+    }
+
+    private fun retryTapShutter(attemptsLeft: Int, delayMs: Long) {
+        if (attemptsLeft <= 0) return
+        if (!tapShutterButton()) {
+            handler.postDelayed({ retryTapShutter(attemptsLeft - 1, delayMs) }, delayMs)
         }
     }
 
