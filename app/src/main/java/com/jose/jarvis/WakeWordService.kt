@@ -120,10 +120,34 @@ class WakeWordService : Service(), RecognitionListener {
         }
     }
 
+    private var lastNotifUpdate: Long = 0
+
     override fun onPartialResult(hypothesis: String?) {
         hypothesis ?: return
         val text = JSONObject(hypothesis).optString("partial", "")
+        if (text.isNotBlank()) {
+            val now = System.currentTimeMillis()
+            if (now - lastNotifUpdate > 1500) {
+                lastNotifUpdate = now
+                updateDebugNotification(text)
+            }
+        }
         checkTextForWakeWord(text)
+    }
+
+    private fun updateDebugNotification(heardText: String) {
+        try {
+            val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+                .setContentTitle("Jarvis escuchando...")
+                .setContentText("Oí: \"$heardText\"")
+                .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+                .setOngoing(true)
+                .build()
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.notify(NOTIF_ID, notification)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error actualizando notificación de debug", e)
+        }
     }
 
     override fun onResult(hypothesis: String?) {
