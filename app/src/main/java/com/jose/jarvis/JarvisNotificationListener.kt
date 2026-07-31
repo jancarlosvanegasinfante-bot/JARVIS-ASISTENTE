@@ -61,7 +61,7 @@ class JarvisNotificationListener : NotificationListenerService() {
     override fun onCreate() {
         super.onCreate()
         val prefs = getSharedPreferences("jarvis_prefs", Context.MODE_PRIVATE)
-        proactiveModeEnabled = prefs.getBoolean("proactive_mode", false)
+        proactiveModeEnabled = prefs.getBoolean("proactive_mode", true)
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {

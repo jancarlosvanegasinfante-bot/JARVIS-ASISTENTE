@@ -94,6 +94,18 @@ class JarvisAccessibilityService : AccessibilityService() {
                 )
                 "adjust_volume" -> adjustVolume(params.optString("direction", "up"))
                 "read_recent_messages" -> readRecentMessages()
+                "record_video" -> recordVideo()
+                "stop_video_recording" -> { tapShutterButton(); speak("Video guardado") }
+                "tell_time" -> tellCurrentTimeDate()
+                "toggle_gps" -> openLocationSettings()
+                "lock_screen" -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
+                    else speak("Tu versión de Android no permite bloquear la pantalla automáticamente")
+                }
+                "clear_notifications" -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) performGlobalAction(GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE)
+                    else performGlobalAction(GLOBAL_ACTION_HOME)
+                }
                 "play_youtube" -> playYouTube(params.optString("query"))
                 "play_spotify" -> playSpotify(params.optString("track"))
                 "open_app" -> openApp(params.optString("appName"), params.optString("packageName"))
@@ -952,6 +964,36 @@ class JarvisAccessibilityService : AccessibilityService() {
     private fun readRecentMessages() {
         val summary = JarvisNotificationListener.getRecentMessagesSummary()
         speak(summary)
+    }
+
+    // Abre la cámara en modo video y toca automáticamente el botón de grabar (reutiliza ids comunes de shutter/record).
+    private fun recordVideo() {
+        try {
+            val intent = Intent(MediaStore.ACTION_VIDEO_CAPTURE).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+            speak("Grabando video")
+            handler.postDelayed({ retryTapShutter(10, 500) }, 1200)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error abriendo cámara de video", e)
+        }
+    }
+
+    private fun tellCurrentTimeDate() {
+        val now = java.util.Calendar.getInstance()
+        val formatter = java.text.SimpleDateFormat("EEEE d 'de' MMMM, h:mm a", java.util.Locale("es", "ES"))
+        speak("Son las ${formatter.format(now.time)}")
+    }
+
+    private fun openLocationSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            })
+        } catch (e: Exception) {
+            Log.e(TAG, "Error abriendo ajustes de ubicación", e)
+        }
     }
 
     private fun typeText(text: String) {
