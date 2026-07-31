@@ -1,20 +1,26 @@
 package com.jose.jarvis
 
 import android.accessibilityservice.AccessibilityService
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.net.Uri
+import android.os.Build
 import android.provider.AlarmClock
 import android.provider.MediaStore
 import android.provider.Settings
 import android.telephony.SmsManager
 import android.util.Log
+import android.view.Display
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.core.content.ContextCompat
 import org.json.JSONObject
+import java.io.OutputStream
 
 class JarvisAccessibilityService : AccessibilityService() {
 
@@ -85,6 +91,7 @@ class JarvisAccessibilityService : AccessibilityService() {
                 "type_text" -> typeText(json.optString("text"))
 
                 "take_photo" -> takePhoto()
+                "take_screenshot" -> takeScreenshotNow()
                 "open_camera" -> openApp("com.android.camera", "")
                 "toggle_flashlight" -> toggleFlashlight()
                 "toggle_wifi" -> openWifiPanel()
@@ -521,6 +528,62 @@ class JarvisAccessibilityService : AccessibilityService() {
         if (attemptsLeft <= 0) return
         if (!tapShutterButton()) {
             handler.postDelayed({ retryTapShutter(attemptsLeft - 1, delayMs) }, delayMs)
+        }
+    }
+
+    private fun takeScreenshotNow() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            speak("Tu versión de Android es muy antigua para tomar capturas automáticas")
+            return
+        }
+        try {
+            takeScreenshot(
+                Display.DEFAULT_DISPLAY,
+                ContextCompat.getMainExecutor(this),
+                object : TakeScreenshotCallback {
+                    override fun onSuccess(result: ScreenshotResult) {
+                        try {
+                            val bitmap = Bitmap.wrapHardwareBuffer(result.hardwareBuffer, result.colorSpace)
+                            result.hardwareBuffer.close()
+                            if (bitmap != null) {
+                                saveBitmapToGallery(bitmap)
+                                speak("Captura de pantalla guardada")
+                            } else {
+                                speak("No pude procesar la captura de pantalla")
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error procesando captura de pantalla", e)
+                        }
+                    }
+
+                    override fun onFailure(errorCode: Int) {
+                        Log.e(TAG, "Error tomando captura de pantalla, código: $errorCode")
+                        speak("No pude tomar la captura de pantalla")
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error solicitando captura de pantalla", e)
+        }
+    }
+
+    private fun saveBitmapToGallery(bitmap: Bitmap) {
+        val filename = "Jarvis_${System.currentTimeMillis()}.png"
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, filename)
+            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Jarvis")
+        }
+        val resolver = contentResolver
+        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return
+        var outputStream: OutputStream? = null
+        try {
+            outputStream = resolver.openOutputStream(uri)
+            outputStream?.let { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error guardando captura en galería", e)
+        } finally {
+            outputStream?.close()
         }
     }
 
