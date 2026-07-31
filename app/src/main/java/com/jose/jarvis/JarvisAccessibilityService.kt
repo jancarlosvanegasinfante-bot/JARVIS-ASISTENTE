@@ -1,6 +1,7 @@
 package com.jose.jarvis
 
 import android.accessibilityservice.AccessibilityService
+import android.app.NotificationManager
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -8,6 +9,7 @@ import android.graphics.Bitmap
 import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.net.Uri
+import android.os.BatteryManager
 import android.os.Build
 import android.provider.AlarmClock
 import android.provider.MediaStore
@@ -78,6 +80,14 @@ class JarvisAccessibilityService : AccessibilityService() {
                     contact = params.optString("contact"),
                     message = params.optString("message")
                 )
+                "open_app_chat" -> openAppAndChat(
+                    appName = params.optString("appName"),
+                    itemIndex = params.optInt("itemIndex", 0),
+                    message = params.optString("message")
+                )
+                "get_battery_status" -> speakBatteryStatus()
+                "toggle_silent_mode" -> toggleSilentMode(params.optString("mode", "silent"))
+                "read_screen" -> readScreenContentAloud()
                 "play_youtube" -> playYouTube(params.optString("query"))
                 "play_spotify" -> playSpotify(params.optString("track"))
                 "open_app" -> openApp(params.optString("appName"), params.optString("packageName"))
@@ -744,6 +754,141 @@ class JarvisAccessibilityService : AccessibilityService() {
             current = current.parent
         }
         return null
+    }
+
+    // Abre cualquier app (Claude, Telegram, Instagram, etc.), opcionalmente toca el N-ésimo elemento
+    // de una lista (por ejemplo la conversación #2), escribe un mensaje y lo envía. Experimental:
+    // como cada app tiene su propia interfaz, puede necesitar ajustes según la app real.
+    private fun openAppAndChat(appName: String, itemIndex: Int, message: String) {
+        openApp(appName, "")
+        handler.postDelayed({
+            if (itemIndex > 0) {
+                tapNthClickableItem(itemIndex)
+                handler.postDelayed({ typeAndSendInCurrentScreen(message) }, 1500)
+            } else {
+                typeAndSendInCurrentScreen(message)
+            }
+        }, 2200)
+    }
+
+    private fun typeAndSendInCurrentScreen(message: String) {
+        if (message.isBlank()) return
+        val editable = findFirstEditableNode(rootInActiveWindow)
+        if (editable != null) {
+            val arguments = android.os.Bundle()
+            arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, message)
+            editable.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
+            handler.postDelayed({ retryTapSend(8, 600) }, 700)
+        } else {
+            Log.w(TAG, "No se encontró un campo de texto editable en la pantalla actual")
+        }
+    }
+
+    private fun findFirstEditableNode(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (node == null) return null
+        if (node.isEditable) return node
+        for (i in 0 until node.childCount) {
+            val found = findFirstEditableNode(node.getChild(i))
+            if (found != null) return found
+        }
+        return null
+    }
+
+    // Recorre el árbol de accesibilidad en orden y toca el N-ésimo nodo clickeable con texto visible
+    // (útil para abrir "la segunda conversación", "el tercer chat", etc.).
+    private fun tapNthClickableItem(index: Int): Boolean {
+        val root = rootInActiveWindow ?: return false
+        var counter = 0
+        var target: AccessibilityNodeInfo? = null
+
+        fun traverse(node: AccessibilityNodeInfo?) {
+            if (node == null || target != null) return
+            val hasText = !node.text.isNullOrBlank() || !node.contentDescription.isNullOrBlank()
+            if (node.isClickable && hasText) {
+                counter++
+                if (counter == index) {
+                    target = node
+                    return
+                }
+            }
+            for (i in 0 until node.childCount) {
+                traverse(node.getChild(i))
+                if (target != null) return
+            }
+        }
+        traverse(root)
+        return if (target != null) {
+            target?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            true
+        } else false
+    }
+
+    private fun speakBatteryStatus() {
+        try {
+            val batteryManager = getSystemService(Context.BATTERY_SERVICE) as BatteryManager
+            val level = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+            speak("La batería está al $level por ciento")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error obteniendo estado de batería", e)
+        }
+    }
+
+    private fun toggleSilentMode(mode: String) {
+        try {
+            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (!notificationManager.isNotificationPolicyAccessGranted) {
+                startActivity(
+                    Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                )
+                speak("Necesito permiso de acceso a notificaciones para cambiar el modo de sonido. Actívalo y prueba de nuevo.")
+                return
+            }
+            val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            when (mode.lowercase()) {
+                "silent", "silencio" -> {
+                    audioManager.ringerMode = AudioManager.RINGER_MODE_SILENT
+                    speak("Celular en silencio")
+                }
+                "vibrate", "vibrar" -> {
+                    audioManager.ringerMode = AudioManager.RINGER_MODE_VIBRATE
+                    speak("Celular en vibración")
+                }
+                else -> {
+                    audioManager.ringerMode = AudioManager.RINGER_MODE_NORMAL
+                    speak("Sonido del celular normalizado")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error cambiando el modo de sonido", e)
+        }
+    }
+
+    // Lee en voz alta el texto visible en pantalla (útil para "qué dice aquí", "léeme esto").
+    private fun readScreenContentAloud() {
+        val root = rootInActiveWindow
+        if (root == null) {
+            speak("No puedo leer la pantalla en este momento")
+            return
+        }
+        val collected = StringBuilder()
+        fun traverse(node: AccessibilityNodeInfo?) {
+            if (node == null) return
+            val text = node.text?.toString()
+            if (!text.isNullOrBlank() && collected.length < 500) {
+                collected.append(text).append(". ")
+            }
+            for (i in 0 until node.childCount) {
+                traverse(node.getChild(i))
+            }
+        }
+        traverse(root)
+        if (collected.isEmpty()) {
+            speak("No encontré texto visible en la pantalla")
+        } else {
+            speak(collected.toString().take(500))
+        }
     }
 
     private fun typeText(text: String) {

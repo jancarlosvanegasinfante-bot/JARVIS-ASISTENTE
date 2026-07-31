@@ -44,6 +44,9 @@
     <!-- Notificaciones en Android 13+ -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Modo silencio/vibración -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+
     <!-- Reconocimiento de voz nativo -->
     <queries>
         <intent>
