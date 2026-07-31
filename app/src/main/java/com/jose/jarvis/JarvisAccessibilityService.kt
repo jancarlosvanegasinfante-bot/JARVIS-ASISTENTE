@@ -92,6 +92,8 @@ class JarvisAccessibilityService : AccessibilityService() {
 
                 "take_photo" -> takePhoto()
                 "take_screenshot" -> takeScreenshotNow()
+                "start_screen_recording" -> startScreenRecording()
+                "stop_screen_recording" -> stopScreenRecording()
                 "open_camera" -> openApp("com.android.camera", "")
                 "toggle_flashlight" -> toggleFlashlight()
                 "toggle_wifi" -> openWifiPanel()
@@ -528,6 +530,28 @@ class JarvisAccessibilityService : AccessibilityService() {
         if (attemptsLeft <= 0) return
         if (!tapShutterButton()) {
             handler.postDelayed({ retryTapShutter(attemptsLeft - 1, delayMs) }, delayMs)
+        }
+    }
+
+    private fun startScreenRecording() {
+        try {
+            speak("Toca Empezar ahora para comenzar a grabar la pantalla")
+            val intent = Intent(this, ScreenRecordRequestActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error solicitando grabación de pantalla", e)
+        }
+    }
+
+    private fun stopScreenRecording() {
+        try {
+            val stopIntent = Intent(this, ScreenRecordService::class.java).apply { action = "STOP" }
+            startService(stopIntent)
+            speak("Grabación de pantalla guardada")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error deteniendo grabación de pantalla", e)
         }
     }
 

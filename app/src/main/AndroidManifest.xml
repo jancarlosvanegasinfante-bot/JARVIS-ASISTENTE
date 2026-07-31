@@ -61,6 +61,9 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
+    <!-- Grabación de pantalla -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+
     <!-- Internet y Estado de Red -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -124,6 +127,17 @@
         <service
             android:name=".WakeWordService"
             android:foregroundServiceType="microphone"
+            android:exported="false" />
+
+        <!-- Grabación de pantalla -->
+        <activity
+            android:name=".ScreenRecordRequestActivity"
+            android:theme="@style/Theme.Jarvis.Translucent"
+            android:excludeFromRecents="true"
+            android:exported="false" />
+        <service
+            android:name=".ScreenRecordService"
+            android:foregroundServiceType="mediaProjection"
             android:exported="false" />
 
         <receiver android:name=".BootReceiver" android:exported="true">
