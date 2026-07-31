@@ -111,7 +111,7 @@ class JarvisAccessibilityService : AccessibilityService() {
             }
             try {
                 startActivity(intent)
-                handler.postDelayed({ tapNodeByText("Enviar") || tapNodeByText("Send") }, 2000)
+                handler.postDelayed({ retryTapSend(6, 700) }, 2200)
                 return
             } catch (e: Exception) {
                 Log.w(TAG, "Fallo Deep Link WhatsApp, realizando fallback por interfaz...", e)
@@ -124,7 +124,7 @@ class JarvisAccessibilityService : AccessibilityService() {
             if (tapNodeByText(target)) {
                 handler.postDelayed({
                     typeText(message)
-                    handler.postDelayed({ tapNodeByText("Enviar") || tapNodeByText("Send") }, 600)
+                    handler.postDelayed({ retryTapSend(6, 700) }, 800)
                 }, 1200)
             }
         }, 1800)
@@ -453,6 +453,41 @@ class JarvisAccessibilityService : AccessibilityService() {
             }
         }
         return false
+    }
+
+    // Busca recursivamente un botón por texto o descripción de contenido (íconos sin texto visible,
+    // como el botón "Enviar" con forma de avión de papel en WhatsApp).
+    private fun tapNodeByAnyMatch(vararg keywords: String): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val lowerKeywords = keywords.map { it.lowercase() }
+        fun search(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+            if (node == null) return null
+            val desc = node.contentDescription?.toString()?.lowercase() ?: ""
+            val txt = node.text?.toString()?.lowercase() ?: ""
+            if (lowerKeywords.any { desc.contains(it) || txt.contains(it) }) {
+                val clickable = findClickableParent(node)
+                if (clickable != null) return clickable
+            }
+            for (i in 0 until node.childCount) {
+                val found = search(node.getChild(i))
+                if (found != null) return found
+            }
+            return null
+        }
+        val target = search(root)
+        return if (target != null) {
+            target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            true
+        } else false
+    }
+
+    // Reintenta encontrar y tocar el botón de enviar varias veces (la UI puede tardar en cargar).
+    private fun retryTapSend(attemptsLeft: Int, delayMs: Long) {
+        if (attemptsLeft <= 0) return
+        val tapped = tapNodeByText("Enviar") || tapNodeByText("Send") || tapNodeByAnyMatch("enviar", "send")
+        if (!tapped) {
+            handler.postDelayed({ retryTapSend(attemptsLeft - 1, delayMs) }, delayMs)
+        }
     }
 
     private fun findClickableParent(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
