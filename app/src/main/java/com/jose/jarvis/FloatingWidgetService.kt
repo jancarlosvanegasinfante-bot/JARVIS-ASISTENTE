@@ -43,6 +43,7 @@ class FloatingWidgetService : Service() {
 
     private var speechRecognizer: SpeechRecognizer? = null
     private var isListening = false
+    private var listeningWatchdog: Runnable? = null
     private var isDragging = false
 
     // Posiciones y estado de snapping
@@ -216,6 +217,15 @@ class FloatingWidgetService : Service() {
         isListening = true
         stopIdleTimer()
 
+        // Watchdog de seguridad: si en 8s no llega ningún callback del reconocimiento
+        // (fallo silencioso del SpeechRecognizer), fuerza el reseteo para que el botón
+        // pueda volver a esconderse y no quede "atascado" en estado escuchando.
+        listeningWatchdog = Runnable {
+            Log.w(TAG, "Watchdog: forzando fin de escucha por timeout sin respuesta")
+            setToIdleState()
+        }
+        handler.postDelayed(listeningWatchdog!!, 8000)
+
         // Cambiar diseño visual a: "Modo Escuchando" (Verde esmeralda / Cian brillante)
         bubbleBg.background = getThemeDrawable(
             solidColor = 0xFF052214.toInt(), // Deep Dark Emerald
@@ -301,6 +311,8 @@ class FloatingWidgetService : Service() {
     }
 
     private fun setToIdleState() {
+        listeningWatchdog?.let { handler.removeCallbacks(it) }
+        listeningWatchdog = null
         isListening = false
         bubbleBg.background = getThemeDrawable(
             solidColor = 0xFA0E1017.toInt(), // Deep Dark Indigo

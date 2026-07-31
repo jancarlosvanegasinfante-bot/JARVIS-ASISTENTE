@@ -88,6 +88,12 @@ class JarvisAccessibilityService : AccessibilityService() {
                 "get_battery_status" -> speakBatteryStatus()
                 "toggle_silent_mode" -> toggleSilentMode(params.optString("mode", "silent"))
                 "read_screen" -> readScreenContentAloud()
+                "open_maps_directions" -> openMapsDirections(
+                    destination = params.optString("destination"),
+                    app = params.optString("app", "maps")
+                )
+                "adjust_volume" -> adjustVolume(params.optString("direction", "up"))
+                "read_recent_messages" -> readRecentMessages()
                 "play_youtube" -> playYouTube(params.optString("query"))
                 "play_spotify" -> playSpotify(params.optString("track"))
                 "open_app" -> openApp(params.optString("appName"), params.optString("packageName"))
@@ -889,6 +895,63 @@ class JarvisAccessibilityService : AccessibilityService() {
         } else {
             speak(collected.toString().take(500))
         }
+    }
+
+    private fun openMapsDirections(destination: String, app: String) {
+        if (destination.isBlank()) {
+            speak("¿A dónde quieres que te lleve?")
+            return
+        }
+        val encoded = Uri.encode(destination)
+        if (app.lowercase().contains("waze")) {
+            val wazeIntent = Intent(Intent.ACTION_VIEW, Uri.parse("waze://?q=$encoded&navigate=yes")).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            try {
+                startActivity(wazeIntent)
+                speak("Abriendo ruta a $destination en Waze")
+                return
+            } catch (e: Exception) {
+                Log.w(TAG, "Waze no disponible, usando Google Maps...", e)
+            }
+        }
+        val mapsIntent = Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=$encoded")).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            setPackage("com.google.android.apps.maps")
+        }
+        try {
+            startActivity(mapsIntent)
+            speak("Abriendo ruta a $destination en Maps")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error abriendo Maps", e)
+            val fallback = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/maps/dir/?api=1&destination=$encoded")).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            try { startActivity(fallback) } catch (e2: Exception) { Log.e(TAG, "Error abriendo Maps web", e2) }
+        }
+    }
+
+    private fun adjustVolume(direction: String) {
+        try {
+            val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val flag = android.media.AudioManager.FLAG_SHOW_UI
+            when (direction.lowercase()) {
+                "up", "sube", "subir", "arriba" -> audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, flag)
+                "down", "baja", "bajar", "abajo" -> audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_LOWER, flag)
+                "mute", "silencio" -> audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_MUTE, flag)
+                "max", "maximo", "máximo" -> {
+                    val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, max, flag)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error ajustando volumen", e)
+        }
+    }
+
+    private fun readRecentMessages() {
+        val summary = JarvisNotificationListener.getRecentMessagesSummary()
+        speak(summary)
     }
 
     private fun typeText(text: String) {
