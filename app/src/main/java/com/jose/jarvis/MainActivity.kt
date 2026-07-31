@@ -205,6 +205,35 @@ class MainActivity : ComponentActivity() {
         return matchedPhone
     }
 
+    fun resolveContactEmail(contactName: String): String {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED || contactName.isBlank()) {
+            return ""
+        }
+        val targetName = contactName.lowercase().trim()
+        var matchedEmail = ""
+
+        val cursor: Cursor? = contentResolver.query(
+            ContactsContract.CommonDataKinds.Email.CONTENT_URI,
+            arrayOf(
+                ContactsContract.CommonDataKinds.Email.DISPLAY_NAME,
+                ContactsContract.CommonDataKinds.Email.ADDRESS
+            ),
+            "${ContactsContract.CommonDataKinds.Email.DISPLAY_NAME} LIKE ?",
+            arrayOf("%$targetName%"),
+            null
+        )
+
+        cursor?.use {
+            if (it.moveToFirst()) {
+                val addressIndex = it.getColumnIndex(ContactsContract.CommonDataKinds.Email.ADDRESS)
+                if (addressIndex >= 0) {
+                    matchedEmail = it.getString(addressIndex)
+                }
+            }
+        }
+        return matchedEmail
+    }
+
     fun getRealContactsJson(): String {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
             return "[]"

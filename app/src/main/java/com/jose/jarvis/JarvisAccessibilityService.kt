@@ -63,6 +63,15 @@ class JarvisAccessibilityService : AccessibilityService() {
                     title = params.optString("title", "Temporizador Jarvis")
                 )
                 "send_sms" -> sendSms(contact = params.optString("contact"), phone = params.optString("phoneNumber"), message = params.optString("message"))
+                "send_email" -> sendEmail(
+                    to = params.optString("to"),
+                    subject = params.optString("subject"),
+                    body = params.optString("body")
+                )
+                "send_facebook" -> sendFacebookMessage(
+                    contact = params.optString("contact"),
+                    message = params.optString("message")
+                )
                 "play_youtube" -> playYouTube(params.optString("query"))
                 "play_spotify" -> playSpotify(params.optString("track"))
                 "open_app" -> openApp(params.optString("appName"), params.optString("packageName"))
@@ -245,6 +254,80 @@ class JarvisAccessibilityService : AccessibilityService() {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         try { startActivity(smsIntent) } catch (e: Exception) { Log.e(TAG, "Error abriendo app de SMS", e) }
+    }
+
+    private fun sendEmail(to: String, subject: String, body: String) {
+        val targetEmail = if (to.contains("@")) to else (MainActivity.instance?.resolveContactEmail(to) ?: "")
+        if (targetEmail.isBlank()) {
+            speak("No encontré el correo electrónico de $to")
+            return
+        }
+        val emailIntent = Intent(Intent.ACTION_SENDTO).apply {
+            data = Uri.parse("mailto:")
+            putExtra(Intent.EXTRA_EMAIL, arrayOf(targetEmail))
+            putExtra(Intent.EXTRA_SUBJECT, subject)
+            putExtra(Intent.EXTRA_TEXT, body)
+            setPackage("com.google.android.gm")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            startActivity(emailIntent)
+            speak("Enviando correo a $to")
+            // Gmail abre el borrador ya con destinatario, asunto y cuerpo listos; solo falta tocar enviar.
+            handler.postDelayed({ retryTapEmailSend(8, 600) }, 1500)
+        } catch (e: Exception) {
+            Log.w(TAG, "Gmail no disponible, intentando cliente de correo genérico...", e)
+            try {
+                val generic = Intent(Intent.ACTION_SENDTO).apply {
+                    data = Uri.parse("mailto:")
+                    putExtra(Intent.EXTRA_EMAIL, arrayOf(targetEmail))
+                    putExtra(Intent.EXTRA_SUBJECT, subject)
+                    putExtra(Intent.EXTRA_TEXT, body)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                startActivity(generic)
+                handler.postDelayed({ retryTapEmailSend(8, 600) }, 1500)
+            } catch (e2: Exception) {
+                Log.e(TAG, "Error abriendo cualquier cliente de correo", e2)
+            }
+        }
+    }
+
+    private fun retryTapEmailSend(attemptsLeft: Int, delayMs: Long) {
+        if (attemptsLeft <= 0) return
+        val root = rootInActiveWindow
+        val tapped = if (root != null) {
+            val gmailSendId = root.findAccessibilityNodeInfosByViewId("com.google.android.gm:id/send")
+            if (gmailSendId.isNotEmpty()) {
+                (findClickableParent(gmailSendId[0]) ?: gmailSendId[0]).performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                true
+            } else {
+                tapNodeByAnyMatch("enviar", "send")
+            }
+        } else false
+        if (!tapped) {
+            handler.postDelayed({ retryTapEmailSend(attemptsLeft - 1, delayMs) }, delayMs)
+        }
+    }
+
+    // Abre Messenger de Facebook, busca el contacto, escribe el mensaje y lo envía automáticamente.
+    private fun sendFacebookMessage(contact: String, message: String) {
+        val messengerPkg = "com.facebook.orca"
+        if (packageManager.getLaunchIntentForPackage(messengerPkg) == null) {
+            speak("No tengo Messenger instalado para enviarle el mensaje a $contact")
+            return
+        }
+        openApp(messengerPkg, "")
+        handler.postDelayed({
+            if (tapNodeByText(contact)) {
+                handler.postDelayed({
+                    typeText(message)
+                    handler.postDelayed({ retryTapSend(8, 600) }, 800)
+                }, 1400)
+            } else {
+                Log.w(TAG, "No se encontró el contacto '$contact' en Messenger")
+            }
+        }, 2000)
     }
 
     private fun playYouTube(query: String) {
