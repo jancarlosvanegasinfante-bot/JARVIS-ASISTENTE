@@ -250,7 +250,56 @@ class JarvisAccessibilityService : AccessibilityService() {
     private fun playYouTube(query: String) {
         val searchUrl = "https://www.youtube.com/results?search_query=${Uri.encode(query)}"
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(searchUrl)).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
-        try { startActivity(intent); speak("Reproduciendo $query en YouTube") } catch (e: Exception) { Log.e(TAG, "Error abriendo YouTube", e) }
+        try {
+            startActivity(intent)
+            speak("Reproduciendo $query en YouTube")
+            // Toca automáticamente el primer resultado para que empiece a reproducir sin intervención.
+            handler.postDelayed({ retryTapFirstYouTubeResult(8, 600) }, 1500)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error abriendo YouTube", e)
+        }
+    }
+
+    // Busca el primer video en la lista de resultados de YouTube y lo toca (miniatura o su contenedor clickeable).
+    private fun tapFirstYouTubeResult(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val idCandidates = listOf(
+            "com.google.android.youtube:id/thumbnail",
+            "com.google.android.youtube:id/video_thumbnail_container"
+        )
+        for (id in idCandidates) {
+            val nodes = root.findAccessibilityNodeInfosByViewId(id)
+            if (nodes.isNotEmpty()) {
+                val clickable = findClickableParent(nodes[0]) ?: nodes[0]
+                clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                return true
+            }
+        }
+        // Fallback genérico: busca el primer nodo clickeable con imagen dentro de la lista de resultados.
+        fun findFirstClickableImage(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+            if (node == null) return null
+            if (node.className?.contains("ImageView") == true) {
+                val clickable = findClickableParent(node)
+                if (clickable != null) return clickable
+            }
+            for (i in 0 until node.childCount) {
+                val found = findFirstClickableImage(node.getChild(i))
+                if (found != null) return found
+            }
+            return null
+        }
+        val fallback = findFirstClickableImage(root)
+        return if (fallback != null) {
+            fallback.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            true
+        } else false
+    }
+
+    private fun retryTapFirstYouTubeResult(attemptsLeft: Int, delayMs: Long) {
+        if (attemptsLeft <= 0) return
+        if (!tapFirstYouTubeResult()) {
+            handler.postDelayed({ retryTapFirstYouTubeResult(attemptsLeft - 1, delayMs) }, delayMs)
+        }
     }
 
     private fun playSpotify(track: String) {
